@@ -1,0 +1,1029 @@
+/* ---------- Defaults & state ---------- */
+const DEFAULT_CONFIG = {
+  visibleColumns: { strategy: true, status: true, health: true, notes: true, updated: true },
+  roles: [
+    "Software Engineer", "Frontend Engineer", "Backend Engineer", "Full Stack Engineer",
+    "Product Engineer", "Engineering Manager", "Product Manager", "Founding Engineer",
+    "Solutions Architect", "Technical Recruiter / Talent", "HR / People Partner", "Executive / Founder"
+  ],
+  statusHierarchy: {
+    "Applied": ["Request sent", "Accepted", "Message sent", "Follow-up sent", "Responded"],
+    "In process": ["Recruiter Screen", "Hiring Manager Interview", "Technical Round", "Final Loop / Onsite"],
+    "Succeeded": ["Verbal Offer", "Offer Letter Received", "Negotiation", "Offer Accepted"],
+    "Rejected": ["Resume Screen", "Post-Interview", "Position Closed / Ghosted"]
+  },
+  approaches: [
+    "LinkedIn InMail / DM", "Cold Email", "Employee Referral", "Mutual Connection",
+    "Twitter / X DM", "Alumni Network", "Careers Portal / Direct Apply"
+  ]
+};
+
+const STALE_DAYS = 5;
+
+let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+let data = [];
+let open = null;
+let filter = "All";
+let activeMenuCoId = null;
+let activeMenuPId = null;
+let pendingDeleteCoId = null;
+let pendingDeleteContact = null; // { coId, pId, personName }
+
+const DOTS_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="12" cy="19" r="2"/></svg>`;
+const EDIT_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
+const TRASH_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
+const CHEVRON_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`;
+
+const $ = id => document.getElementById(id);
+const uid = () => Math.random().toString(36).slice(2, 9);
+const nowIso = () => new Date().toISOString();
+const today = () => new Date().toISOString().slice(0, 10);
+
+/* ---------- Helpers ---------- */
+const getStatuses = () => Object.keys(config.statusHierarchy || {});
+const getSubcategories = status => (config.statusHierarchy && config.statusHierarchy[status]) || [];
+
+function days(d) {
+  if (!d) return 0;
+  return Math.floor((Date.now() - new Date(d).getTime()) / 864e5);
+}
+
+function formatCalendarDate(isoStr) {
+  const dt = isoStr ? new Date(isoStr) : new Date();
+  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function formatRelativeTime(isoStr) {
+  if (!isoStr) return "Today";
+  const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 864e5);
+  if (diff <= 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return `${diff} days ago`;
+}
+
+function esc(s) {
+  return String(s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function showToast(message, type = "info") {
+  const container = $("toast-container");
+  if (!container) return;
+  const el = document.createElement("div");
+  el.className = "toast";
+  const color = type === "success" ? "var(--ok)" : type === "warn" ? "var(--warn)" : "var(--ink-muted)";
+  el.innerHTML = `<span style="color:${color}">●</span><span>${esc(message)}</span>`;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.style.transition = "all 0.2s ease";
+    el.style.opacity = "0";
+    el.style.transform = "translateY(8px)";
+    setTimeout(() => el.remove(), 250);
+  }, 2600);
+}
+
+/* ---------- Storage ---------- */
+function loadConfig() {
+  try {
+    const raw = localStorage.getItem("jot-config");
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!parsed.statusHierarchy) {
+      parsed.statusHierarchy = JSON.parse(JSON.stringify(DEFAULT_CONFIG.statusHierarchy));
+      if (Array.isArray(parsed.stages)) parsed.statusHierarchy["Applied"] = parsed.stages;
+    }
+    if (!Array.isArray(parsed.roles) || !parsed.roles.length) parsed.roles = [...DEFAULT_CONFIG.roles];
+    if (!Array.isArray(parsed.approaches) || !parsed.approaches.length) parsed.approaches = [...DEFAULT_CONFIG.approaches];
+    config = Object.assign({}, DEFAULT_CONFIG, parsed);
+  } catch (e) {
+    config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+  }
+}
+
+function saveConfig() {
+  try { localStorage.setItem("jot-config", JSON.stringify(config)); } catch (e) { }
+}
+
+function save() {
+  try { localStorage.setItem("jot", JSON.stringify(data)); } catch (e) { }
+}
+
+function sampleData() {
+  const hrs = h => new Date(Date.now() - h * 3600e3).toISOString();
+  const dayStr = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+  return [
+    {
+      id: "demo1", company: "Northwind Labs", role: "Product Engineer", type: "Proactive",
+      approach: "LinkedIn InMail / DM", status: "Applied", subCategory: "Responded",
+      comment: "Sample company. Delete it when you start adding your own.",
+      updatedAt: hrs(2),
+      contacts: [
+        { id: "c1", name: "Maya Rivera", role: "Engineering Manager", url: "https://linkedin.com/in/example", stage: "Responded", comment: "Asked me to send over a short portfolio.", date: today(), updatedAt: hrs(2) },
+        { id: "c2", name: "Sam Okafor", role: "Technical Recruiter / Talent", url: "", stage: "Request sent", comment: "", date: dayStr(7), updatedAt: hrs(168) },
+        { id: "c3", name: "Lena Park", role: "Software Engineer", url: "", stage: "Accepted", comment: "", date: dayStr(2), updatedAt: hrs(48) }
+      ]
+    },
+    {
+      id: "demo2", company: "Brightside Cloud", role: "Frontend Engineer", type: "Reactive",
+      approach: "Careers Portal / Direct Apply", status: "In process", subCategory: "Technical Round",
+      comment: "Technical round booked for next week.", updatedAt: hrs(30), contacts: []
+    }
+  ];
+}
+
+function load() {
+  loadConfig();
+  try {
+    const raw = localStorage.getItem("jot");
+    if (raw) {
+      data = JSON.parse(raw);
+    } else {
+      data = sampleData();
+      save();
+    }
+  } catch (e) {
+    data = [];
+  }
+}
+
+/* ---------- Derived info ---------- */
+function getLatestUpdateInfo(c) {
+  let latest = c.updatedAt ? new Date(c.updatedAt).getTime() : 0;
+  (c.contacts || []).forEach(p => {
+    const t = p.updatedAt ? new Date(p.updatedAt).getTime() : (p.date ? new Date(p.date).getTime() : 0);
+    if (t > latest) latest = t;
+  });
+  const iso = latest > 0 ? new Date(latest).toISOString() : (c.updatedAt || nowIso());
+  return { iso, calendarDate: formatCalendarDate(iso), relativeText: formatRelativeTime(iso) };
+}
+
+function getSubStageNudge(c) {
+  const subs = getSubcategories(c.status);
+  const contacts = c.contacts || [];
+  if (!contacts.length || !subs.length) return "";
+  const ranks = contacts.map(p => subs.indexOf(p.stage)).filter(r => r >= 0);
+  if (!ranks.length) return "";
+  const best = Math.max(...ranks);
+  const newest = Math.min(...contacts.map(p => days(p.date || p.updatedAt)));
+  if (best === 0 && newest >= STALE_DAYS) return `No movement in ${newest}d`;
+  if (best > 0 && best < subs.length - 1) {
+    const last = Math.min(...contacts.filter(p => subs.indexOf(p.stage) === best).map(p => days(p.date || p.updatedAt)));
+    if (last >= STALE_DAYS) return `No reply in ${last}d`;
+  }
+  return "";
+}
+
+/* ---------- Dropdown syncing ---------- */
+function roleOptions(selected, extra) {
+  const roles = [...(config.roles || [])];
+  if (extra && !roles.includes(extra)) roles.unshift(extra);
+  return `<option value="">Select role...</option>` +
+    roles.map(r => `<option value="${esc(r)}" ${r === selected ? "selected" : ""}>${esc(r)}</option>`).join("");
+}
+
+function approachOptions(selected) {
+  const list = [...(config.approaches || [])];
+  if (selected && !list.includes(selected)) list.unshift(selected);
+  return `<option value="">Select approach...</option>` +
+    list.map(a => `<option value="${esc(a)}" ${a === selected ? "selected" : ""}>${esc(a)}</option>`).join("");
+}
+
+function subcatOptions(status, selected) {
+  const subs = getSubcategories(status);
+  return subs.length
+    ? subs.map(s => `<option value="${esc(s)}" ${s === selected ? "selected" : ""}>${esc(s)}</option>`).join("")
+    : `<option value="General">General</option>`;
+}
+
+function syncDropdownOptions() {
+  const statuses = getStatuses();
+  if ($("nRole")) $("nRole").innerHTML = roleOptions($("nRole").value);
+  if ($("nApproach")) $("nApproach").innerHTML = approachOptions($("nApproach").value);
+  if ($("nStatus")) {
+    const cur = statuses.includes($("nStatus").value) ? $("nStatus").value : statuses[0];
+    $("nStatus").innerHTML = statuses.map(s => `<option value="${esc(s)}" ${s === cur ? "selected" : ""}>${esc(s)}</option>`).join("");
+    updateAddSubCategoryOptions();
+  }
+}
+
+function updateAddSubCategoryOptions() {
+  $("nSubCategory").innerHTML = subcatOptions($("nStatus").value || getStatuses()[0]);
+}
+
+function updateEditSubCategoryOptions(selected) {
+  $("editSubCategory").innerHTML = subcatOptions($("editStatus").value || getStatuses()[0], selected);
+}
+
+$("nStatus").addEventListener("change", updateAddSubCategoryOptions);
+$("editStatus").addEventListener("change", () => updateEditSubCategoryOptions());
+
+/* ---------- Rendering ---------- */
+function renderTableHeaders() {
+  const cols = config.visibleColumns;
+  let h = `<tr><th style="min-width:240px;">Company and target role</th>`;
+  if (cols.strategy) h += `<th style="width:17%;">Strategy and approach</th>`;
+  if (cols.status) h += `<th style="width:14%;">Overall status</th>`;
+  if (cols.health) h += `<th style="width:18%;">Sub-category</th>`;
+  if (cols.notes) h += `<th style="width:18%;">Notes and comments</th>`;
+  if (cols.updated) h += `<th style="width:13%;">Updated</th>`;
+  h += `<th style="width:60px;text-align:right;">Actions</th></tr>`;
+  $("tableHead").innerHTML = h;
+}
+
+function renderContactCard(c, p, subs) {
+  const isStale = days(p.date || p.updatedAt) >= STALE_DAYS;
+  const cleanUrl = (p.url || "").replace(/^https?:\/\/(www\.)?/, "");
+  const when = `${formatCalendarDate(p.updatedAt || p.date)} • ${formatRelativeTime(p.updatedAt || p.date)}`;
+  let stages = subs.slice();
+  if (p.stage && !stages.includes(p.stage)) stages.unshift(p.stage);
+  if (!stages.length) stages = ["Contacted"];
+  const ref = `${c.id}|${p.id}`;
+  return `
+    <div class="contact-card">
+      <div class="contact-top-row">
+        <div class="contact-name-col">
+          <div class="contact-avatar">${esc((p.name || "U").charAt(0).toUpperCase())}</div>
+          <div class="contact-person-info">
+            <span class="contact-person-name">${esc(p.name)}</span>
+            <span class="contact-person-role">${esc(p.role || "Role unspecified")}</span>
+          </div>
+        </div>
+        <div class="contact-link-col">
+          ${p.url ? `<a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer" title="${esc(p.url)}">${esc(cleanUrl)}</a>` : `<span class="no-link">No LinkedIn link</span>`}
+        </div>
+        <div>
+          <select class="stage-select" data-pst="${ref}" aria-label="Stage">
+            ${stages.map(s => `<option value="${esc(s)}" ${s === p.stage ? "selected" : ""}>${esc(s)}</option>`).join("")}
+          </select>
+        </div>
+        <div><span class="contact-date-badge ${isStale ? "stale" : ""}">${esc(when)}</span></div>
+        <div class="contact-actions-col">
+          <button class="btn-dots" data-pdots="${p.id}" title="Person actions" aria-label="Person options">${DOTS_SVG}</button>
+          <div class="action-dropdown ${activeMenuPId === p.id ? "show" : ""}">
+            <button class="dropdown-item" data-paction="edit" data-ref="${ref}">${EDIT_SVG}<span>Edit person</span></button>
+            <button class="dropdown-item danger" data-paction="delete" data-ref="${ref}">${TRASH_SVG}<span>Remove person</span></button>
+          </div>
+        </div>
+      </div>
+      ${p.comment ? `<div class="contact-note-display-box">${esc(p.comment)}</div>` : ""}
+    </div>`;
+}
+
+// Menus are position:fixed, so place them next to their button
+function placeMenu() {
+  document.querySelectorAll(".action-dropdown.show").forEach(m => {
+    const b = m.parentElement.querySelector("[data-dots],[data-pdots]");
+    if (!b) return;
+    const r = b.getBoundingClientRect();
+    const h = m.offsetHeight;
+    m.style.left = Math.max(8, r.right - m.offsetWidth) + "px";
+    m.style.top = (r.bottom + 4 + h > window.innerHeight ? r.top - h - 4 : r.bottom + 4) + "px";
+  });
+}
+
+function closeMenus() {
+  if (activeMenuCoId || activeMenuPId) {
+    activeMenuCoId = null;
+    activeMenuPId = null;
+    render();
+  }
+}
+
+window.addEventListener("scroll", closeMenus, true);
+window.addEventListener("resize", closeMenus);
+
+function render() {
+  syncDropdownOptions();
+  renderTableHeaders();
+
+  const statuses = getStatuses();
+  const cols = config.visibleColumns;
+
+  $("tabs").innerHTML = ["All", ...statuses].map(t => {
+    const count = t === "All" ? data.length : data.filter(c => c.status === t).length;
+    return `<button class="tab-btn ${filter === t ? "active" : ""}" data-t="${esc(t)}"><span>${esc(t)}</span><span class="tab-badge">${count}</span></button>`;
+  }).join("");
+
+  const q = $("q").value.trim().toLowerCase();
+  $("clearSearch").classList.toggle("show", q.length > 0);
+
+  const rows = data.filter(c => {
+    if (filter !== "All" && c.status !== filter) return false;
+    const hay = [
+      c.company, c.role, c.type, c.approach, c.subCategory, c.comment,
+      ...(c.contacts || []).map(p => `${p.name} ${p.role || ""} ${p.stage || ""} ${p.comment || ""}`)
+    ].join(" ").toLowerCase();
+    return hay.includes(q);
+  });
+
+  const totalCols = 2 + ["strategy", "status", "health", "notes", "updated"].filter(k => cols[k]).length;
+
+  if (!rows.length) {
+    const filtered = data.length > 0;
+    $("body").innerHTML = `
+      <tr><td colspan="${totalCols}">
+        <div class="empty-state">
+          <div class="empty-title">${filtered ? "No matching companies" : "No companies tracked yet"}</div>
+          <p class="empty-desc">${filtered ? "Try a different search or switch to another status tab." : "Add the companies you are targeting to start tracking your outreach."}</p>
+          ${filtered ? "" : `<button class="btn btn-primary" data-open-add="1">Add your first company</button>`}
+        </div>
+      </td></tr>`;
+    return;
+  }
+
+  $("body").innerHTML = rows.map(c => {
+    const isOpen = open === c.id;
+    const isProactive = c.type === "Proactive";
+    const info = getLatestUpdateInfo(c);
+    const subs = getSubcategories(c.status);
+    const activeSub = c.subCategory || subs[0] || "";
+    const nudge = getSubStageNudge(c);
+    const contactNotes = (c.contacts || []).filter(p => p.comment && p.comment.trim());
+    const hasNote = Boolean(c.comment && c.comment.trim());
+
+    let html = `
+      <tr class="co-row ${isOpen ? "is-open" : ""}" data-id="${c.id}">
+        <td>
+          <div class="company-cell">
+            <button class="btn-chevron-toggle ${isOpen ? "open" : ""}" data-toggle-co="${c.id}" title="Show or hide people" aria-label="Toggle people">${CHEVRON_SVG}</button>
+            <div class="company-logo">${esc((c.company || "C").trim().charAt(0).toUpperCase())}</div>
+            <div class="company-meta">
+              <span class="company-name">${esc(c.company)}</span>
+              <span class="company-role">${esc(c.role || "No role specified")}</span>
+            </div>
+          </div>
+        </td>`;
+
+    if (cols.strategy) {
+      html += `
+        <td>
+          <div class="strategy-approach-cell">
+            <span class="badge">${esc(c.type || "Proactive")}</span>
+            <span class="approach-tag">${esc(c.approach || (isProactive ? "Direct outreach" : "Job application"))}</span>
+          </div>
+        </td>`;
+    }
+
+    if (cols.status) {
+      html += `
+        <td>
+          <select class="status-pill-select" data-st="${c.id}" aria-label="Change status">
+            ${statuses.map(s => `<option value="${esc(s)}" ${s === c.status ? "selected" : ""}>${esc(s)}</option>`).join("")}
+          </select>
+        </td>`;
+    }
+
+    if (cols.health) {
+      html += `
+        <td>
+          <div class="subcategory-cell">
+            <select class="subcategory-pill-select" data-subcat="${c.id}" aria-label="Sub-category for ${esc(c.status)}">
+              ${subcatOptions(c.status, activeSub)}
+            </select>
+            ${nudge ? `<div class="nudge-badge">${esc(nudge)}</div>` : ""}
+          </div>
+        </td>`;
+    }
+
+    if (cols.notes) {
+      html += `
+        <td>
+          <div class="notes-cell">
+            ${hasNote ? `<div class="company-note-preview" title="${esc(c.comment)}">${esc(c.comment)}</div>` : (!contactNotes.length ? `<span class="no-notes-text">No notes yet</span>` : "")}
+            ${contactNotes.length ? `<div class="contact-notes-pill" title="${esc(contactNotes.map(p => `${p.name}: ${p.comment}`).join("\n"))}">${contactNotes.length} person note${contactNotes.length > 1 ? "s" : ""}</div>` : ""}
+          </div>
+        </td>`;
+    }
+
+    if (cols.updated) {
+      html += `
+        <td>
+          <div class="date-cell" title="Updated: ${esc(info.iso)}">
+            <span class="date-main">${esc(info.calendarDate)}</span>
+            <span class="date-sub">${esc(info.relativeText)}</span>
+          </div>
+        </td>`;
+    }
+
+    html += `
+        <td>
+          <div class="action-cell">
+            <button class="btn-dots" data-dots="${c.id}" title="Company actions" aria-label="Company options">${DOTS_SVG}</button>
+            <div class="action-dropdown ${activeMenuCoId === c.id ? "show" : ""}">
+              <button class="dropdown-item" data-action="edit" data-co="${c.id}">${EDIT_SVG}<span>Edit company</span></button>
+              <button class="dropdown-item danger" data-action="delete" data-co="${c.id}">${TRASH_SVG}<span>Delete company</span></button>
+            </div>
+          </div>
+        </td>
+      </tr>`;
+
+    if (isOpen) {
+      html += `
+        <tr class="detail-row">
+          <td colspan="${totalCols}">
+            <div class="detail-panel">
+              <div class="detail-header">
+                <div class="detail-title">
+                  <span>People reached out to at ${esc(c.company)}</span>
+                  <span class="tab-badge">${(c.contacts || []).length}</span>
+                </div>
+                <button class="btn btn-primary btn-sm" data-open-person="${c.id}">Add person</button>
+              </div>
+              ${(c.contacts && c.contacts.length)
+          ? `<div class="contacts-container">${c.contacts.map(p => renderContactCard(c, p, subs)).join("")}</div>`
+          : `<div class="no-notes-text">No one added yet. Use Add person to log your first contact.</div>`}
+            </div>
+          </td>
+        </tr>`;
+    }
+    return html;
+  }).join("");
+
+  placeMenu();
+}
+
+/* ---------- Modal helpers ---------- */
+const MODALS = ["addForm", "personModal", "editModal", "deleteConfirmModal", "deletePersonModal", "settingsModal"];
+const showModal = id => $(id).classList.add("show");
+const hideModal = id => $(id).classList.remove("show");
+
+function openAddModal() {
+  syncDropdownOptions();
+  showModal("addForm");
+  $("nCo").focus();
+}
+
+function openEditModal(coId) {
+  const c = data.find(x => x.id === coId);
+  if (!c) return;
+  $("editId").value = c.id;
+  $("editCo").value = c.company || "";
+  $("editType").value = c.type || "Proactive";
+  $("editRole").innerHTML = roleOptions(c.role, c.role);
+  $("editApproach").innerHTML = approachOptions(c.approach);
+  $("editStatus").innerHTML = getStatuses().map(s => `<option value="${esc(s)}" ${s === c.status ? "selected" : ""}>${esc(s)}</option>`).join("");
+  updateEditSubCategoryOptions(c.subCategory);
+  $("editComment").value = c.comment || "";
+  showModal("editModal");
+}
+
+function openPersonModal(coId, pId) {
+  const c = data.find(x => x.id === coId);
+  if (!c) return;
+  const p = pId ? (c.contacts || []).find(x => x.id === pId) : null;
+  const stages = getSubcategories(c.status).slice();
+  if (!stages.length) stages.push("Contacted");
+  if (p && p.stage && !stages.includes(p.stage)) stages.unshift(p.stage);
+
+  $("pCo").value = coId;
+  $("pId").value = pId || "";
+  $("personModalTitle").textContent = p ? `Edit person at ${c.company}` : `Add person at ${c.company}`;
+  $("savePersonBtn").textContent = p ? "Save changes" : "Add person";
+  $("pn").value = p ? p.name : "";
+  $("pr").innerHTML = roleOptions(p ? p.role : "", p ? p.role : "");
+  $("pu").value = p ? (p.url || "") : "";
+  $("ps").innerHTML = stages.map(s => `<option value="${esc(s)}" ${p && s === p.stage ? "selected" : ""}>${esc(s)}</option>`).join("");
+  $("pnNote").value = p ? (p.comment || "") : "";
+  showModal("personModal");
+  $("pn").focus();
+}
+
+function openDeleteConfirmModal(coId) {
+  const c = data.find(x => x.id === coId);
+  if (!c) return;
+  pendingDeleteCoId = coId;
+  $("deleteTargetName").textContent = `"${c.company}"`;
+  showModal("deleteConfirmModal");
+}
+
+function openDeletePersonModal(coId, pId, personName) {
+  pendingDeleteContact = { coId, pId, personName };
+  $("deletePersonTargetName").textContent = `"${personName}"`;
+  showModal("deletePersonModal");
+}
+
+function closeAllModals() {
+  MODALS.forEach(hideModal);
+  pendingDeleteCoId = null;
+  pendingDeleteContact = null;
+}
+
+/* ---------- Settings rendering ---------- */
+function renderRoleChips() {
+  $("roleChips").innerHTML = (config.roles || []).map((r, i) => `
+    <span class="chip"><span>${esc(r)}</span>
+    ${config.roles.length > 1 ? `<button class="chip-remove" data-del-role="${i}" title="Remove role">✕</button>` : ""}</span>`).join("");
+}
+
+function renderApproachChips() {
+  $("approachChips").innerHTML = config.approaches.map((a, i) => `
+    <span class="chip"><span>${esc(a)}</span>
+    ${config.approaches.length > 1 ? `<button class="chip-remove" data-del-opt="approach|${i}" title="Remove">✕</button>` : ""}</span>`).join("");
+}
+
+function renderSettingsHierarchy() {
+  const statuses = getStatuses();
+  $("statusHierarchyContainer").innerHTML = statuses.map(name => {
+    const subs = getSubcategories(name);
+    return `
+      <div class="status-card-config">
+        <div class="status-card-header">
+          <div class="status-badge-title">
+            <span class="badge">${esc(name)}</span>
+            <span style="font-size:12px;color:var(--ink-muted);font-weight:500;">${subs.length} sub-categor${subs.length === 1 ? "y" : "ies"}</span>
+          </div>
+          ${statuses.length > 1 ? `<button class="btn btn-sm btn-danger" data-del-status="${esc(name)}">Remove status</button>` : ""}
+        </div>
+        <div class="subcategories-container">
+          <span class="subcategories-label">Sub-categories for ${esc(name)}</span>
+          <div class="chip-container">
+            ${subs.length ? subs.map((sc, i) => `
+              <span class="chip"><span>${esc(sc)}</span><button class="chip-remove" data-del-sub="${esc(name)}|${i}" title="Remove sub-category">✕</button></span>`).join("")
+        : `<span style="font-size:12px;color:var(--ink-faint);font-style:italic;">No sub-categories yet</span>`}
+          </div>
+          <div class="chip-add-bar">
+            <input data-sub-input="${esc(name)}" placeholder="Add a sub-category under ${esc(name)}" autocomplete="off">
+            <button class="btn btn-sm btn-primary" data-add-sub="${esc(name)}">Add</button>
+          </div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function openSettingsModal() {
+  const cols = config.visibleColumns;
+  $("colStrategy").checked = cols.strategy !== false;
+  $("colStatus").checked = cols.status !== false;
+  $("colHealth").checked = cols.health !== false;
+  $("colNotes").checked = cols.notes !== false;
+  $("colUpdated").checked = cols.updated !== false;
+  renderRoleChips();
+  renderSettingsHierarchy();
+  renderApproachChips();
+  showModal("settingsModal");
+}
+
+/* ---------- Click handling ---------- */
+document.addEventListener("click", e => {
+  const t = e.target;
+
+  // Click on a modal backdrop closes that modal
+  if (t.classList && t.classList.contains("modal-overlay")) {
+    hideModal(t.id);
+    if (t.id === "deleteConfirmModal") pendingDeleteCoId = null;
+    if (t.id === "deletePersonModal") pendingDeleteContact = null;
+    return;
+  }
+
+  // Click outside an open three-dot menu closes it
+  let menuWasOpen = false;
+  if ((activeMenuCoId || activeMenuPId) && !t.closest(".action-dropdown, [data-dots], [data-pdots]")) {
+    activeMenuCoId = null;
+    activeMenuPId = null;
+    menuWasOpen = true;
+  }
+
+  const tab = t.closest("[data-t]");
+  if (tab) { filter = tab.dataset.t; render(); return; }
+
+  if (t.closest("[data-open-add]")) { openAddModal(); return; }
+
+  const chevron = t.closest("[data-toggle-co]");
+  if (chevron) {
+    open = open === chevron.dataset.toggleCo ? null : chevron.dataset.toggleCo;
+    render();
+    return;
+  }
+
+  const dots = t.closest("[data-dots]");
+  if (dots) {
+    const id = dots.dataset.dots;
+    activeMenuCoId = activeMenuCoId === id ? null : id;
+    activeMenuPId = null;
+    render();
+    return;
+  }
+
+  const pDots = t.closest("[data-pdots]");
+  if (pDots) {
+    const id = pDots.dataset.pdots;
+    activeMenuPId = activeMenuPId === id ? null : id;
+    activeMenuCoId = null;
+    render();
+    return;
+  }
+
+  const coAction = t.closest("[data-action]");
+  if (coAction) {
+    const coId = coAction.dataset.co;
+    activeMenuCoId = null;
+    render();
+    if (coAction.dataset.action === "edit") openEditModal(coId);
+    else openDeleteConfirmModal(coId);
+    return;
+  }
+
+  const pAction = t.closest("[data-paction]");
+  if (pAction) {
+    const [coId, pId] = pAction.dataset.ref.split("|");
+    activeMenuPId = null;
+    render();
+    if (pAction.dataset.paction === "edit") {
+      openPersonModal(coId, pId);
+    } else {
+      const c = data.find(x => x.id === coId);
+      const p = c && c.contacts.find(x => x.id === pId);
+      openDeletePersonModal(coId, pId, p ? p.name : "this person");
+    }
+    return;
+  }
+
+  const addPerson = t.closest("[data-open-person]");
+  if (addPerson) { openPersonModal(addPerson.dataset.openPerson); return; }
+
+  // Settings: remove role
+  const delRole = t.closest("[data-del-role]");
+  if (delRole) {
+    if (config.roles.length > 1) {
+      const removed = config.roles.splice(parseInt(delRole.dataset.delRole, 10), 1);
+      saveConfig();
+      renderRoleChips();
+      render();
+      showToast(`Removed role "${removed[0]}"`);
+    }
+    return;
+  }
+
+  // Settings: add sub-category
+  const addSub = t.closest("[data-add-sub]");
+  if (addSub) {
+    const name = addSub.dataset.addSub;
+    const input = Array.from(document.querySelectorAll("[data-sub-input]")).find(i => i.dataset.subInput === name);
+    const val = input ? input.value.trim() : "";
+    if (val) {
+      if (!config.statusHierarchy[name]) config.statusHierarchy[name] = [];
+      if (!config.statusHierarchy[name].includes(val)) {
+        config.statusHierarchy[name].push(val);
+        saveConfig();
+        renderSettingsHierarchy();
+        render();
+        showToast(`Added "${val}" under ${name}`, "success");
+      }
+    }
+    return;
+  }
+
+  // Settings: remove sub-category
+  const delSub = t.closest("[data-del-sub]");
+  if (delSub) {
+    const [name, idx] = delSub.dataset.delSub.split("|");
+    if (config.statusHierarchy[name]) {
+      config.statusHierarchy[name].splice(parseInt(idx, 10), 1);
+      saveConfig();
+      renderSettingsHierarchy();
+      render();
+    }
+    return;
+  }
+
+  // Settings: remove status
+  const delStatus = t.closest("[data-del-status]");
+  if (delStatus) {
+    const name = delStatus.dataset.delStatus;
+    if (getStatuses().length > 1 && confirm(`Remove status "${name}" and its sub-categories?`)) {
+      delete config.statusHierarchy[name];
+      saveConfig();
+      renderSettingsHierarchy();
+      render();
+      showToast(`Removed status ${name}`);
+    }
+    return;
+  }
+
+  // Settings: remove approach
+  const delOpt = t.closest("[data-del-opt]");
+  if (delOpt) {
+    const idx = parseInt(delOpt.dataset.delOpt.split("|")[1], 10);
+    if (config.approaches.length > 1) {
+      config.approaches.splice(idx, 1);
+      saveConfig();
+      renderApproachChips();
+      render();
+    }
+    return;
+  }
+
+  // Click anywhere on a company row (not on a control) toggles its people
+  const tr = t.closest("tr.co-row");
+  if (tr && !t.closest("select, button, a, input, .action-dropdown")) {
+    open = open === tr.dataset.id ? null : tr.dataset.id;
+    render();
+    return;
+  }
+
+  if (menuWasOpen) render();
+});
+
+/* ---------- Dropdown changes in the table ---------- */
+document.addEventListener("change", e => {
+  const t = e.target;
+
+  if (t.dataset.st) {
+    const c = data.find(x => x.id === t.dataset.st);
+    if (c) {
+      c.status = t.value;
+      c.subCategory = getSubcategories(c.status)[0] || "General";
+      c.updatedAt = nowIso();
+      save();
+      render();
+      showToast(`Updated ${c.company} to ${t.value}`);
+    }
+  }
+
+  if (t.dataset.subcat) {
+    const c = data.find(x => x.id === t.dataset.subcat);
+    if (c) {
+      c.subCategory = t.value;
+      c.updatedAt = nowIso();
+      save();
+      render();
+      showToast(`Updated sub-category to ${t.value}`);
+    }
+  }
+
+  if (t.dataset.pst) {
+    const [coId, pId] = t.dataset.pst.split("|");
+    const c = data.find(x => x.id === coId);
+    const p = c && c.contacts.find(x => x.id === pId);
+    if (p) {
+      const ts = nowIso();
+      p.stage = t.value;
+      p.date = today();
+      p.updatedAt = ts;
+      c.updatedAt = ts;
+      save();
+      render();
+      showToast(`Updated ${p.name} to ${t.value}`);
+    }
+  }
+});
+
+/* ---------- Search ---------- */
+$("q").addEventListener("input", render);
+$("clearSearch").addEventListener("click", () => { $("q").value = ""; render(); $("q").focus(); });
+
+/* ---------- Add company ---------- */
+$("addBtn").onclick = openAddModal;
+$("closeAddBtn").onclick = () => hideModal("addForm");
+$("cancelAdd").onclick = () => hideModal("addForm");
+
+$("save").onclick = () => {
+  const company = $("nCo").value.trim();
+  if (!company) return $("nCo").focus();
+  const type = $("nType").value;
+  const status = $("nStatus").value || getStatuses()[0] || "Applied";
+  const c = {
+    id: uid(),
+    company,
+    role: $("nRole").value.trim(),
+    type,
+    approach: $("nApproach").value.trim() || (type === "Proactive" ? "LinkedIn InMail / DM" : "Careers Portal / Direct Apply"),
+    status,
+    subCategory: $("nSubCategory").value || getSubcategories(status)[0] || "General",
+    comment: $("nComment").value.trim(),
+    updatedAt: nowIso(),
+    contacts: []
+  };
+  data.unshift(c);
+  open = c.id;
+  save();
+  $("nCo").value = "";
+  $("nRole").value = "";
+  $("nApproach").value = "";
+  $("nComment").value = "";
+  hideModal("addForm");
+  render();
+  showToast(`Added ${company}`, "success");
+};
+
+/* ---------- Add / edit person ---------- */
+$("closePersonBtn").onclick = () => hideModal("personModal");
+$("cancelPersonBtn").onclick = () => hideModal("personModal");
+
+$("savePersonBtn").onclick = () => {
+  const c = data.find(x => x.id === $("pCo").value);
+  if (!c) return;
+  const name = $("pn").value.trim();
+  if (!name) return $("pn").focus();
+  const ts = nowIso();
+  const pId = $("pId").value;
+  const fields = {
+    name,
+    role: $("pr").value,
+    url: $("pu").value.trim(),
+    stage: $("ps").value,
+    comment: $("pnNote").value.trim()
+  };
+  if (!c.contacts) c.contacts = [];
+  if (pId) {
+    const p = c.contacts.find(x => x.id === pId);
+    if (p) {
+      if (p.stage !== fields.stage) p.date = today();
+      Object.assign(p, fields, { updatedAt: ts });
+    }
+  } else {
+    c.contacts.push({ id: uid(), ...fields, date: today(), updatedAt: ts });
+  }
+  c.updatedAt = ts;
+  save();
+  hideModal("personModal");
+  render();
+  showToast(pId ? `Updated ${name}` : `Added ${name} to ${c.company}`, "success");
+};
+
+/* ---------- Edit company ---------- */
+$("closeEditBtn").onclick = () => hideModal("editModal");
+$("cancelEditBtn").onclick = () => hideModal("editModal");
+
+$("saveEditBtn").onclick = () => {
+  const c = data.find(x => x.id === $("editId").value);
+  if (!c) return;
+  const name = $("editCo").value.trim();
+  if (!name) return $("editCo").focus();
+  c.company = name;
+  c.role = $("editRole").value.trim();
+  c.type = $("editType").value;
+  c.approach = $("editApproach").value.trim() || (c.type === "Proactive" ? "LinkedIn InMail / DM" : "Careers Portal / Direct Apply");
+  c.status = $("editStatus").value;
+  c.subCategory = $("editSubCategory").value || getSubcategories(c.status)[0] || "General";
+  c.comment = $("editComment").value.trim();
+  c.updatedAt = nowIso();
+  save();
+  hideModal("editModal");
+  render();
+  showToast(`Updated ${c.company}`, "success");
+};
+
+/* ---------- Delete company / person ---------- */
+function cancelDeleteCompany() { pendingDeleteCoId = null; hideModal("deleteConfirmModal"); }
+function cancelDeletePerson() { pendingDeleteContact = null; hideModal("deletePersonModal"); }
+
+$("cancelDeleteBtn").onclick = cancelDeleteCompany;
+$("closeDeleteModalBtn").onclick = cancelDeleteCompany;
+$("cancelDeletePersonBtn").onclick = cancelDeletePerson;
+$("closeDeletePersonModalBtn").onclick = cancelDeletePerson;
+
+$("confirmDeleteBtn").onclick = () => {
+  if (!pendingDeleteCoId) return;
+  const c = data.find(x => x.id === pendingDeleteCoId);
+  const name = c ? c.company : "Company";
+  data = data.filter(x => x.id !== pendingDeleteCoId);
+  if (open === pendingDeleteCoId) open = null;
+  save();
+  cancelDeleteCompany();
+  render();
+  showToast(`Deleted ${name}`);
+};
+
+$("confirmDeletePersonBtn").onclick = () => {
+  if (!pendingDeleteContact) return;
+  const { coId, pId, personName } = pendingDeleteContact;
+  const c = data.find(x => x.id === coId);
+  if (c) {
+    c.contacts = c.contacts.filter(p => p.id !== pId);
+    c.updatedAt = nowIso();
+    save();
+  }
+  cancelDeletePerson();
+  render();
+  showToast(`Removed ${personName}`);
+};
+
+/* ---------- Settings ---------- */
+$("settingsBtn").onclick = openSettingsModal;
+$("closeSettingsBtn").onclick = () => hideModal("settingsModal");
+
+$("doneSettingsBtn").onclick = () => {
+  config.visibleColumns = {
+    strategy: $("colStrategy").checked,
+    status: $("colStatus").checked,
+    health: $("colHealth").checked,
+    notes: $("colNotes").checked,
+    updated: $("colUpdated").checked
+  };
+  saveConfig();
+  hideModal("settingsModal");
+  render();
+  showToast("Settings updated", "success");
+};
+
+$("addRoleBtn").onclick = () => {
+  const val = $("newRoleInput").value.trim();
+  if (val && !config.roles.includes(val)) {
+    config.roles.push(val);
+    saveConfig();
+    $("newRoleInput").value = "";
+    renderRoleChips();
+    render();
+    showToast(`Added role "${val}"`, "success");
+  }
+};
+
+$("addApproachBtn").onclick = () => {
+  const val = $("newApproachInput").value.trim();
+  if (val && !config.approaches.includes(val)) {
+    config.approaches.push(val);
+    saveConfig();
+    $("newApproachInput").value = "";
+    renderApproachChips();
+    render();
+  }
+};
+
+$("addOverallStatusBtn").onclick = () => {
+  const val = $("newOverallStatusInput").value.trim();
+  if (val && !config.statusHierarchy[val]) {
+    config.statusHierarchy[val] = ["Stage 1", "Stage 2"];
+    saveConfig();
+    $("newOverallStatusInput").value = "";
+    renderSettingsHierarchy();
+    render();
+    showToast(`Added status "${val}"`, "success");
+  }
+};
+
+/* ---------- Export / import ---------- */
+$("expBtn").onclick = () => {
+  const blob = new Blob([JSON.stringify({ data, config }, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `job-outreach-backup-${today()}.json`;
+  a.click();
+  showToast("Exported backup file", "success");
+};
+
+$("impBtn").onclick = () => $("impFile").click();
+
+$("impFile").onchange = e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      const incoming = Array.isArray(parsed) ? parsed : parsed.data;
+      if (!Array.isArray(incoming)) throw new Error("bad file");
+      if (!confirm("Replace your current data with this backup?")) return;
+      data = incoming;
+      if (!Array.isArray(parsed) && parsed.config && parsed.config.statusHierarchy) {
+        config = Object.assign({}, DEFAULT_CONFIG, parsed.config);
+        saveConfig();
+      }
+      save();
+      render();
+      showToast("Backup imported", "success");
+    } catch (err) {
+      showToast("That file isn’t a valid backup", "warn");
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = "";
+};
+
+/* ---------- Theme ---------- */
+const SUN_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>`;
+const MOON_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>`;
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  $("themeToggle").innerHTML = theme === "dark" ? MOON_SVG : SUN_SVG;
+}
+
+let savedTheme = null;
+try { savedTheme = localStorage.getItem("jot-theme"); } catch (e) { }
+applyTheme(savedTheme || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+
+$("themeToggle").addEventListener("click", () => {
+  const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  try { localStorage.setItem("jot-theme", next); } catch (e) { }
+  applyTheme(next);
+});
+
+/* ---------- Keyboard ---------- */
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    closeAllModals();
+    activeMenuCoId = null;
+    activeMenuPId = null;
+    render();
+  }
+  // Enter submits the add-company and person popups from a text field
+  if (e.key === "Enter" && e.target.tagName === "INPUT" && e.target.type !== "file") {
+    if ($("addForm").classList.contains("show")) $("save").click();
+    else if ($("personModal").classList.contains("show")) $("savePersonBtn").click();
+    else if ($("editModal").classList.contains("show")) $("saveEditBtn").click();
+  }
+});
+
+/* ---------- Boot ---------- */
+load();
+render();
