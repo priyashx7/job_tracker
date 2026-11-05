@@ -1,17 +1,34 @@
 /* ---------- Defaults & state ---------- */
 const DEFAULT_CONFIG = {
   visibleColumns: { strategy: true, status: true, health: true, notes: true, updated: true },
-  roles: [
+
+  // Roles YOU are searching for at a company
+  searchRoles: [
     "Software Engineer", "Frontend Engineer", "Backend Engineer", "Full Stack Engineer",
     "Product Engineer", "Engineering Manager", "Product Manager", "Founding Engineer",
-    "Solutions Architect", "Technical Recruiter / Talent", "HR / People Partner", "Executive / Founder"
+    "Solutions Architect"
   ],
+
+  // Roles of the PEOPLE you reach out to
+  personRoles: [
+    "Recruiter / Talent", "HR / People Partner", "Hiring Manager", "Engineering Manager",
+    "Product Manager", "Team Member / Peer", "Alumni", "Executive / Founder"
+  ],
+
+  // Stages with a PERSON (independent of the company status)
+  personStages: [
+    "Request sent", "Accepted", "Message sent", "Follow-up sent", "Responded",
+    "Referral asked", "Referral received"
+  ],
+
+  // Company level statuses and their sub-categories
   statusHierarchy: {
-    "Applied": ["Request sent", "Accepted", "Message sent", "Follow-up sent", "Responded"],
+    "Applied": ["Reached out", "Application submitted", "Referral requested", "Referral received", "Responded"],
     "In process": ["Recruiter Screen", "Hiring Manager Interview", "Technical Round", "Final Loop / Onsite"],
     "Succeeded": ["Verbal Offer", "Offer Letter Received", "Negotiation", "Offer Accepted"],
     "Rejected": ["Resume Screen", "Post-Interview", "Position Closed / Ghosted"]
   },
+
   approaches: [
     "LinkedIn InMail / DM", "Cold Email", "Employee Referral", "Mutual Connection",
     "Twitter / X DM", "Alumni Network", "Careers Portal / Direct Apply"
@@ -20,7 +37,9 @@ const DEFAULT_CONFIG = {
 
 const STALE_DAYS = 5;
 
-let config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+const clone = o => JSON.parse(JSON.stringify(o));
+
+let config = clone(DEFAULT_CONFIG);
 let data = [];
 let open = null;
 let filter = "All";
@@ -65,12 +84,23 @@ function esc(s) {
   return String(s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+// Picks a colour tone for an overall status
+function tone(name) {
+  const n = (name || "").toLowerCase();
+  if (/reject|closed|declin|ghost/.test(n)) return "red";
+  if (/succe|offer|hired|won|accepted/.test(n)) return "green";
+  if (/process|interview|progress|screen/.test(n)) return "amber";
+  if (/appl/.test(n)) return "blue";
+  const idx = Math.max(0, getStatuses().indexOf(name));
+  return ["blue", "purple", "teal", "amber"][idx % 4];
+}
+
 function showToast(message, type = "info") {
   const container = $("toast-container");
   if (!container) return;
   const el = document.createElement("div");
   el.className = "toast";
-  const color = type === "success" ? "var(--ok)" : type === "warn" ? "var(--warn)" : "var(--ink-muted)";
+  const color = type === "success" ? "var(--ok)" : type === "warn" ? "var(--warn)" : "var(--primary)";
   el.innerHTML = `<span style="color:${color}">●</span><span>${esc(message)}</span>`;
   container.appendChild(el);
   setTimeout(() => {
@@ -82,20 +112,32 @@ function showToast(message, type = "info") {
 }
 
 /* ---------- Storage ---------- */
+
+// Turns any saved or imported config (old or new) into the current shape
+function normalizeConfig(parsed) {
+  const out = clone(DEFAULT_CONFIG);
+  if (!parsed || typeof parsed !== "object") return out;
+
+  if (parsed.visibleColumns) out.visibleColumns = Object.assign({}, out.visibleColumns, parsed.visibleColumns);
+
+  // Old configs had a single "roles" list. It becomes the searching roles.
+  if (Array.isArray(parsed.searchRoles) && parsed.searchRoles.length) out.searchRoles = parsed.searchRoles.slice();
+  else if (Array.isArray(parsed.roles) && parsed.roles.length) out.searchRoles = parsed.roles.slice();
+
+  if (Array.isArray(parsed.personRoles) && parsed.personRoles.length) out.personRoles = parsed.personRoles.slice();
+  if (Array.isArray(parsed.personStages) && parsed.personStages.length) out.personStages = parsed.personStages.slice();
+
+  if (parsed.statusHierarchy && Object.keys(parsed.statusHierarchy).length) out.statusHierarchy = clone(parsed.statusHierarchy);
+  if (Array.isArray(parsed.approaches) && parsed.approaches.length) out.approaches = parsed.approaches.slice();
+  return out;
+}
+
 function loadConfig() {
   try {
     const raw = localStorage.getItem("jot-config");
-    if (!raw) return;
-    const parsed = JSON.parse(raw);
-    if (!parsed.statusHierarchy) {
-      parsed.statusHierarchy = JSON.parse(JSON.stringify(DEFAULT_CONFIG.statusHierarchy));
-      if (Array.isArray(parsed.stages)) parsed.statusHierarchy["Applied"] = parsed.stages;
-    }
-    if (!Array.isArray(parsed.roles) || !parsed.roles.length) parsed.roles = [...DEFAULT_CONFIG.roles];
-    if (!Array.isArray(parsed.approaches) || !parsed.approaches.length) parsed.approaches = [...DEFAULT_CONFIG.approaches];
-    config = Object.assign({}, DEFAULT_CONFIG, parsed);
+    config = normalizeConfig(raw ? JSON.parse(raw) : null);
   } catch (e) {
-    config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+    config = clone(DEFAULT_CONFIG);
   }
 }
 
@@ -113,13 +155,13 @@ function sampleData() {
   return [
     {
       id: "demo1", company: "Northwind Labs", role: "Product Engineer", type: "Proactive",
-      approach: "LinkedIn InMail / DM", status: "Applied", subCategory: "Responded",
+      approach: "LinkedIn InMail / DM", status: "Applied", subCategory: "Referral requested",
       comment: "Sample company. Delete it when you start adding your own.",
       updatedAt: hrs(2),
       contacts: [
-        { id: "c1", name: "Maya Rivera", role: "Engineering Manager", url: "https://linkedin.com/in/example", stage: "Responded", comment: "Asked me to send over a short portfolio.", date: today(), updatedAt: hrs(2) },
-        { id: "c2", name: "Sam Okafor", role: "Technical Recruiter / Talent", url: "", stage: "Request sent", comment: "", date: dayStr(7), updatedAt: hrs(168) },
-        { id: "c3", name: "Lena Park", role: "Software Engineer", url: "", stage: "Accepted", comment: "", date: dayStr(2), updatedAt: hrs(48) }
+        { id: "c1", name: "Maya Rivera", role: "Hiring Manager", url: "https://linkedin.com/in/example", stage: "Responded", comment: "Asked me to send over a short portfolio.", date: today(), updatedAt: hrs(2) },
+        { id: "c2", name: "Sam Okafor", role: "Recruiter / Talent", url: "", stage: "Request sent", comment: "", date: dayStr(7), updatedAt: hrs(168) },
+        { id: "c3", name: "Lena Park", role: "Team Member / Peer", url: "", stage: "Referral asked", comment: "", date: dayStr(2), updatedAt: hrs(48) }
       ]
     },
     {
@@ -156,35 +198,36 @@ function getLatestUpdateInfo(c) {
   return { iso, calendarDate: formatCalendarDate(iso), relativeText: formatRelativeTime(iso) };
 }
 
+// Nudge uses PERSON stages, never the company sub-categories
 function getSubStageNudge(c) {
-  const subs = getSubcategories(c.status);
+  if (/succe|reject/i.test(c.status || "")) return "";
+  const stages = config.personStages || [];
   const contacts = c.contacts || [];
-  if (!contacts.length || !subs.length) return "";
-  const ranks = contacts.map(p => subs.indexOf(p.stage)).filter(r => r >= 0);
-  if (!ranks.length) return "";
-  const best = Math.max(...ranks);
-  const newest = Math.min(...contacts.map(p => days(p.date || p.updatedAt)));
-  if (best === 0 && newest >= STALE_DAYS) return `No movement in ${newest}d`;
-  if (best > 0 && best < subs.length - 1) {
-    const last = Math.min(...contacts.filter(p => subs.indexOf(p.stage) === best).map(p => days(p.date || p.updatedAt)));
-    if (last >= STALE_DAYS) return `No reply in ${last}d`;
-  }
-  return "";
+  if (!contacts.length || !stages.length) return "";
+  const ranked = contacts.map(p => ({ p, r: stages.indexOf(p.stage) })).filter(x => x.r >= 0);
+  if (!ranked.length) return "";
+  const best = Math.max(...ranked.map(x => x.r));
+  if (best >= stages.length - 1) return "";
+  const atBest = ranked.filter(x => x.r === best);
+  const last = Math.min(...atBest.map(x => days(x.p.date || x.p.updatedAt)));
+  if (last < STALE_DAYS) return "";
+  return best === 0 ? `No movement in ${last}d` : `No reply in ${last}d`;
 }
 
 /* ---------- Dropdown syncing ---------- */
-function roleOptions(selected, extra) {
-  const roles = [...(config.roles || [])];
-  if (extra && !roles.includes(extra)) roles.unshift(extra);
-  return `<option value="">Select role...</option>` +
-    roles.map(r => `<option value="${esc(r)}" ${r === selected ? "selected" : ""}>${esc(r)}</option>`).join("");
+function optionList(list, selected, placeholder) {
+  const items = [...list];
+  if (selected && !items.includes(selected)) items.unshift(selected);
+  return (placeholder ? `<option value="">${placeholder}</option>` : "") +
+    items.map(r => `<option value="${esc(r)}" ${r === selected ? "selected" : ""}>${esc(r)}</option>`).join("");
 }
 
-function approachOptions(selected) {
-  const list = [...(config.approaches || [])];
-  if (selected && !list.includes(selected)) list.unshift(selected);
-  return `<option value="">Select approach...</option>` +
-    list.map(a => `<option value="${esc(a)}" ${a === selected ? "selected" : ""}>${esc(a)}</option>`).join("");
+const searchRoleOptions = selected => optionList(config.searchRoles || [], selected, "Select searching role...");
+const personRoleOptions = selected => optionList(config.personRoles || [], selected, "Select person role...");
+const approachOptions = selected => optionList(config.approaches || [], selected, "Select approach...");
+function stageOptions(selected) {
+  const list = (config.personStages && config.personStages.length) ? config.personStages : ["Contacted"];
+  return optionList(list, selected || list[0], "");
 }
 
 function subcatOptions(status, selected) {
@@ -196,7 +239,7 @@ function subcatOptions(status, selected) {
 
 function syncDropdownOptions() {
   const statuses = getStatuses();
-  if ($("nRole")) $("nRole").innerHTML = roleOptions($("nRole").value);
+  if ($("nRole")) $("nRole").innerHTML = searchRoleOptions($("nRole").value);
   if ($("nApproach")) $("nApproach").innerHTML = approachOptions($("nApproach").value);
   if ($("nStatus")) {
     const cur = statuses.includes($("nStatus").value) ? $("nStatus").value : statuses[0];
@@ -219,7 +262,7 @@ $("editStatus").addEventListener("change", () => updateEditSubCategoryOptions())
 /* ---------- Rendering ---------- */
 function renderTableHeaders() {
   const cols = config.visibleColumns;
-  let h = `<tr><th style="min-width:240px;">Company and target role</th>`;
+  let h = `<tr><th style="min-width:240px;">Company and searching role</th>`;
   if (cols.strategy) h += `<th style="width:17%;">Strategy and approach</th>`;
   if (cols.status) h += `<th style="width:14%;">Overall status</th>`;
   if (cols.health) h += `<th style="width:18%;">Sub-category</th>`;
@@ -229,13 +272,10 @@ function renderTableHeaders() {
   $("tableHead").innerHTML = h;
 }
 
-function renderContactCard(c, p, subs) {
+function renderContactCard(c, p) {
   const isStale = days(p.date || p.updatedAt) >= STALE_DAYS;
   const cleanUrl = (p.url || "").replace(/^https?:\/\/(www\.)?/, "");
   const when = `${formatCalendarDate(p.updatedAt || p.date)} • ${formatRelativeTime(p.updatedAt || p.date)}`;
-  let stages = subs.slice();
-  if (p.stage && !stages.includes(p.stage)) stages.unshift(p.stage);
-  if (!stages.length) stages = ["Contacted"];
   const ref = `${c.id}|${p.id}`;
   return `
     <div class="contact-card">
@@ -252,7 +292,7 @@ function renderContactCard(c, p, subs) {
         </div>
         <div>
           <select class="stage-select" data-pst="${ref}" aria-label="Stage">
-            ${stages.map(s => `<option value="${esc(s)}" ${s === p.stage ? "selected" : ""}>${esc(s)}</option>`).join("")}
+            ${stageOptions(p.stage)}
           </select>
         </div>
         <div><span class="contact-date-badge ${isStale ? "stale" : ""}">${esc(when)}</span></div>
@@ -300,7 +340,8 @@ function render() {
 
   $("tabs").innerHTML = ["All", ...statuses].map(t => {
     const count = t === "All" ? data.length : data.filter(c => c.status === t).length;
-    return `<button class="tab-btn ${filter === t ? "active" : ""}" data-t="${esc(t)}"><span>${esc(t)}</span><span class="tab-badge">${count}</span></button>`;
+    const tn = t === "All" ? "neutral" : tone(t);
+    return `<button class="tab-btn tone-${tn} ${filter === t ? "active" : ""}" data-t="${esc(t)}">${t === "All" ? "" : `<span class="tab-dot"></span>`}<span>${esc(t)}</span><span class="tab-badge">${count}</span></button>`;
   }).join("");
 
   const q = $("q").value.trim().toLowerCase();
@@ -339,9 +380,10 @@ function render() {
     const nudge = getSubStageNudge(c);
     const contactNotes = (c.contacts || []).filter(p => p.comment && p.comment.trim());
     const hasNote = Boolean(c.comment && c.comment.trim());
+    const tn = tone(c.status);
 
     let html = `
-      <tr class="co-row ${isOpen ? "is-open" : ""}" data-id="${c.id}">
+      <tr class="co-row tone-${tn} ${isOpen ? "is-open" : ""}" data-id="${c.id}">
         <td>
           <div class="company-cell">
             <button class="btn-chevron-toggle ${isOpen ? "open" : ""}" data-toggle-co="${c.id}" title="Show or hide people" aria-label="Toggle people">${CHEVRON_SVG}</button>
@@ -357,7 +399,7 @@ function render() {
       html += `
         <td>
           <div class="strategy-approach-cell">
-            <span class="badge">${esc(c.type || "Proactive")}</span>
+            <span class="badge ${isProactive ? "badge-proactive" : "badge-reactive"}">${esc(c.type || "Proactive")}</span>
             <span class="approach-tag">${esc(c.approach || (isProactive ? "Direct outreach" : "Job application"))}</span>
           </div>
         </td>`;
@@ -429,7 +471,7 @@ function render() {
                 <button class="btn btn-primary btn-sm" data-open-person="${c.id}">Add person</button>
               </div>
               ${(c.contacts && c.contacts.length)
-          ? `<div class="contacts-container">${c.contacts.map(p => renderContactCard(c, p, subs)).join("")}</div>`
+          ? `<div class="contacts-container">${c.contacts.map(p => renderContactCard(c, p)).join("")}</div>`
           : `<div class="no-notes-text">No one added yet. Use Add person to log your first contact.</div>`}
             </div>
           </td>
@@ -458,7 +500,7 @@ function openEditModal(coId) {
   $("editId").value = c.id;
   $("editCo").value = c.company || "";
   $("editType").value = c.type || "Proactive";
-  $("editRole").innerHTML = roleOptions(c.role, c.role);
+  $("editRole").innerHTML = searchRoleOptions(c.role);
   $("editApproach").innerHTML = approachOptions(c.approach);
   $("editStatus").innerHTML = getStatuses().map(s => `<option value="${esc(s)}" ${s === c.status ? "selected" : ""}>${esc(s)}</option>`).join("");
   updateEditSubCategoryOptions(c.subCategory);
@@ -470,18 +512,16 @@ function openPersonModal(coId, pId) {
   const c = data.find(x => x.id === coId);
   if (!c) return;
   const p = pId ? (c.contacts || []).find(x => x.id === pId) : null;
-  const stages = getSubcategories(c.status).slice();
-  if (!stages.length) stages.push("Contacted");
-  if (p && p.stage && !stages.includes(p.stage)) stages.unshift(p.stage);
 
   $("pCo").value = coId;
   $("pId").value = pId || "";
   $("personModalTitle").textContent = p ? `Edit person at ${c.company}` : `Add person at ${c.company}`;
   $("savePersonBtn").textContent = p ? "Save changes" : "Add person";
   $("pn").value = p ? p.name : "";
-  $("pr").innerHTML = roleOptions(p ? p.role : "", p ? p.role : "");
+  $("pr").innerHTML = personRoleOptions(p ? p.role : "");
   $("pu").value = p ? (p.url || "") : "";
-  $("ps").innerHTML = stages.map(s => `<option value="${esc(s)}" ${p && s === p.stage ? "selected" : ""}>${esc(s)}</option>`).join("");
+  // Person stages are independent of the company status, so every stage is always available
+  $("ps").innerHTML = stageOptions(p ? p.stage : "");
   $("pnNote").value = p ? (p.comment || "") : "";
   showModal("personModal");
   $("pn").focus();
@@ -508,16 +548,37 @@ function closeAllModals() {
 }
 
 /* ---------- Settings rendering ---------- */
-function renderRoleChips() {
-  $("roleChips").innerHTML = (config.roles || []).map((r, i) => `
-    <span class="chip"><span>${esc(r)}</span>
-    ${config.roles.length > 1 ? `<button class="chip-remove" data-del-role="${i}" title="Remove role">✕</button>` : ""}</span>`).join("");
+// One renderer for all simple lists. listKey is a key of config.
+const SIMPLE_LISTS = {
+  searchRoles: { box: "roleChips", label: "searching role", ordered: false },
+  personRoles: { box: "personRoleChips", label: "person role", ordered: false },
+  personStages: { box: "stageChips", label: "person stage", ordered: true },
+  approaches: { box: "approachChips", label: "approach", ordered: false }
+};
+
+function renderList(listKey) {
+  const meta = SIMPLE_LISTS[listKey];
+  const list = config[listKey] || [];
+  $(meta.box).innerHTML = list.map((item, i) => `
+    <span class="chip">${meta.ordered ? `<span class="chip-order">${i + 1}</span>` : ""}<span>${esc(item)}</span>
+    ${list.length > 1 ? `<button class="chip-remove" data-del-list="${listKey}|${i}" title="Remove ${meta.label}">✕</button>` : ""}</span>`).join("");
 }
 
-function renderApproachChips() {
-  $("approachChips").innerHTML = config.approaches.map((a, i) => `
-    <span class="chip"><span>${esc(a)}</span>
-    ${config.approaches.length > 1 ? `<button class="chip-remove" data-del-opt="approach|${i}" title="Remove">✕</button>` : ""}</span>`).join("");
+function renderAllLists() {
+  Object.keys(SIMPLE_LISTS).forEach(renderList);
+}
+
+function addToList(listKey, inputId) {
+  const val = $(inputId).value.trim();
+  if (!val) return;
+  if (!config[listKey].includes(val)) {
+    config[listKey].push(val);
+    saveConfig();
+    $(inputId).value = "";
+    renderList(listKey);
+    render();
+    showToast(`Added ${SIMPLE_LISTS[listKey].label} "${val}"`, "success");
+  }
 }
 
 function renderSettingsHierarchy() {
@@ -556,9 +617,8 @@ function openSettingsModal() {
   $("colHealth").checked = cols.health !== false;
   $("colNotes").checked = cols.notes !== false;
   $("colUpdated").checked = cols.updated !== false;
-  renderRoleChips();
+  renderAllLists();
   renderSettingsHierarchy();
-  renderApproachChips();
   showModal("settingsModal");
 }
 
@@ -574,7 +634,7 @@ document.addEventListener("click", e => {
     return;
   }
 
-  // Click outside an open three-dot menu closes it
+  // Click outside an open three dot menu closes it
   let menuWasOpen = false;
   if ((activeMenuCoId || activeMenuPId) && !t.closest(".action-dropdown, [data-dots], [data-pdots]")) {
     activeMenuCoId = null;
@@ -640,15 +700,17 @@ document.addEventListener("click", e => {
   const addPerson = t.closest("[data-open-person]");
   if (addPerson) { openPersonModal(addPerson.dataset.openPerson); return; }
 
-  // Settings: remove role
-  const delRole = t.closest("[data-del-role]");
-  if (delRole) {
-    if (config.roles.length > 1) {
-      const removed = config.roles.splice(parseInt(delRole.dataset.delRole, 10), 1);
+  // Settings: remove an item from any simple list
+  const delList = t.closest("[data-del-list]");
+  if (delList) {
+    const [listKey, idx] = delList.dataset.delList.split("|");
+    const list = config[listKey];
+    if (list && list.length > 1) {
+      const removed = list.splice(parseInt(idx, 10), 1);
       saveConfig();
-      renderRoleChips();
+      renderList(listKey);
       render();
-      showToast(`Removed role "${removed[0]}"`);
+      showToast(`Removed "${removed[0]}"`);
     }
     return;
   }
@@ -695,19 +757,6 @@ document.addEventListener("click", e => {
       renderSettingsHierarchy();
       render();
       showToast(`Removed status ${name}`);
-    }
-    return;
-  }
-
-  // Settings: remove approach
-  const delOpt = t.closest("[data-del-opt]");
-  if (delOpt) {
-    const idx = parseInt(delOpt.dataset.delOpt.split("|")[1], 10);
-    if (config.approaches.length > 1) {
-      config.approaches.splice(idx, 1);
-      saveConfig();
-      renderApproachChips();
-      render();
     }
     return;
   }
@@ -916,28 +965,10 @@ $("doneSettingsBtn").onclick = () => {
   showToast("Settings updated", "success");
 };
 
-$("addRoleBtn").onclick = () => {
-  const val = $("newRoleInput").value.trim();
-  if (val && !config.roles.includes(val)) {
-    config.roles.push(val);
-    saveConfig();
-    $("newRoleInput").value = "";
-    renderRoleChips();
-    render();
-    showToast(`Added role "${val}"`, "success");
-  }
-};
-
-$("addApproachBtn").onclick = () => {
-  const val = $("newApproachInput").value.trim();
-  if (val && !config.approaches.includes(val)) {
-    config.approaches.push(val);
-    saveConfig();
-    $("newApproachInput").value = "";
-    renderApproachChips();
-    render();
-  }
-};
+$("addRoleBtn").onclick = () => addToList("searchRoles", "newRoleInput");
+$("addPersonRoleBtn").onclick = () => addToList("personRoles", "newPersonRoleInput");
+$("addStageBtn").onclick = () => addToList("personStages", "newStageInput");
+$("addApproachBtn").onclick = () => addToList("approaches", "newApproachInput");
 
 $("addOverallStatusBtn").onclick = () => {
   const val = $("newOverallStatusInput").value.trim();
@@ -961,33 +992,6 @@ $("expBtn").onclick = () => {
   showToast("Exported backup file", "success");
 };
 
-$("impBtn").onclick = () => $("impFile").click();
-
-$("impFile").onchange = e => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const parsed = JSON.parse(reader.result);
-      const incoming = Array.isArray(parsed) ? parsed : parsed.data;
-      if (!Array.isArray(incoming)) throw new Error("bad file");
-      if (!confirm("Replace your current data with this backup?")) return;
-      data = incoming;
-      if (!Array.isArray(parsed) && parsed.config && parsed.config.statusHierarchy) {
-        config = Object.assign({}, DEFAULT_CONFIG, parsed.config);
-        saveConfig();
-      }
-      save();
-      render();
-      showToast("Backup imported", "success");
-    } catch (err) {
-      showToast("That file isn’t a valid backup", "warn");
-    }
-  };
-  reader.readAsText(file);
-  e.target.value = "";
-};
 
 /* ---------- Theme ---------- */
 const SUN_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>`;
@@ -1016,7 +1020,7 @@ document.addEventListener("keydown", e => {
     activeMenuPId = null;
     render();
   }
-  // Enter submits the add-company and person popups from a text field
+  // Enter submits the add company, edit company and person popups from a text field
   if (e.key === "Enter" && e.target.tagName === "INPUT" && e.target.type !== "file") {
     if ($("addForm").classList.contains("show")) $("save").click();
     else if ($("personModal").classList.contains("show")) $("savePersonBtn").click();

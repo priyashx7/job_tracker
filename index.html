@@ -9,7 +9,7 @@
     href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧭</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -33,7 +33,7 @@
       </div>
 
       <div class="header-actions">
-        <button class="btn btn-icon" id="settingsBtn" title="Customize columns, roles, statuses and sub-categories"
+        <button class="btn btn-icon" id="settingsBtn" title="Customize roles, stages, statuses and approaches"
           aria-label="Settings">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
@@ -45,8 +45,6 @@
 
         <button class="btn btn-icon" id="themeToggle" title="Toggle dark/light mode" aria-label="Toggle theme"></button>
 
-        <button class="btn btn-sm" id="impBtn" title="Import a JSON backup">Import</button>
-        <input type="file" id="impFile" accept="application/json" hidden>
         <button class="btn btn-sm" id="expBtn" title="Export JSON backup">Export</button>
 
         <button class="btn btn-primary" id="addBtn">
@@ -67,7 +65,8 @@
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
-        <input id="q" type="search" placeholder="Search by company, role, approach, or notes..." aria-label="Search">
+        <input id="q" type="search" placeholder="Search by company, role, approach, person or notes..."
+          aria-label="Search">
         <button class="clear-search-btn" id="clearSearch" title="Clear search">✕</button>
       </div>
       <div class="status-tabs" id="tabs"></div>
@@ -96,7 +95,7 @@
           <input id="nCo" placeholder="e.g. Stripe, Linear, Google" autocomplete="off">
         </div>
         <div class="form-group">
-          <label for="nRole">Target role</label>
+          <label for="nRole">Searching role (the job you are looking for)</label>
           <select id="nRole"></select>
         </div>
         <div class="form-group">
@@ -145,7 +144,7 @@
           <input id="pn" autocomplete="off">
         </div>
         <div class="form-group">
-          <label for="pr">Role</label>
+          <label for="pr">Person role (who they are at the company)</label>
           <select id="pr"></select>
         </div>
         <div class="form-group">
@@ -153,7 +152,7 @@
           <input id="pu" placeholder="Optional" autocomplete="off">
         </div>
         <div class="form-group">
-          <label for="ps">Stage</label>
+          <label for="ps">Stage with this person</label>
           <select id="ps"></select>
         </div>
         <div class="form-group">
@@ -182,7 +181,7 @@
           <input id="editCo" autocomplete="off">
         </div>
         <div class="form-group">
-          <label for="editRole">Target role</label>
+          <label for="editRole">Searching role (the job you are looking for)</label>
           <select id="editRole"></select>
         </div>
         <div class="form-group">
@@ -278,19 +277,44 @@
         </div>
 
         <div class="settings-section">
-          <div class="settings-section-title">Role options</div>
-          <p class="settings-section-subtitle">Roles available in the dropdowns for companies and people.</p>
+          <div class="settings-section-title">Searching roles</div>
+          <p class="settings-section-subtitle">The roles you are looking for at a company. These appear when you add or
+            edit a company.</p>
           <div class="chip-container" id="roleChips"></div>
           <div class="chip-add-bar">
-            <input id="newRoleInput" placeholder="Add a role (e.g. Solutions Architect)" autocomplete="off">
+            <input id="newRoleInput" placeholder="Add a searching role (e.g. Associate Product Manager)"
+              autocomplete="off">
             <button class="btn btn-sm btn-primary" id="addRoleBtn">Add role</button>
           </div>
         </div>
 
         <div class="settings-section">
+          <div class="settings-section-title">Person roles</div>
+          <p class="settings-section-subtitle">The roles of the people you reach out to (recruiter, hiring manager,
+            alumni and so on). These appear when you add or edit a person.</p>
+          <div class="chip-container" id="personRoleChips"></div>
+          <div class="chip-add-bar">
+            <input id="newPersonRoleInput" placeholder="Add a person role (e.g. Hiring Manager)" autocomplete="off">
+            <button class="btn btn-sm btn-primary" id="addPersonRoleBtn">Add role</button>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-title">Person stages</div>
+          <p class="settings-section-subtitle">Where you stand with each person, in order. These are independent of the
+            company's overall status and sub-category, so you can pick any of them for any person.</p>
+          <div class="chip-container" id="stageChips"></div>
+          <div class="chip-add-bar">
+            <input id="newStageInput" placeholder="Add a person stage (e.g. Referral asked)" autocomplete="off">
+            <button class="btn btn-sm btn-primary" id="addStageBtn">Add stage</button>
+          </div>
+        </div>
+
+        <div class="settings-section">
           <div class="settings-section-title">Overall statuses and sub-categories</div>
-          <p class="settings-section-subtitle">Each overall status has its own sub-categories. People you contact use
-            the sub-categories of their company’s status.</p>
+          <p class="settings-section-subtitle">These describe the company as a whole. Each overall status has its own
+            sub-categories (for example, a referral step after Applied). They do not limit which stage you can pick for
+            a person.</p>
           <div class="status-hierarchy-list" id="statusHierarchyContainer"></div>
           <div class="add-status-row">
             <input id="newOverallStatusInput" placeholder="Add an overall status (e.g. Screening)" autocomplete="off">
