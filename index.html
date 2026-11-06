@@ -215,50 +215,13 @@
     </div>
   </div>
 
-  <!-- Delete Company Modal -->
-  <div class="modal-overlay" id="deleteConfirmModal">
-    <div class="modal-card modal-card-sm">
-      <div class="modal-header">
-        <div class="modal-title" style="color:var(--bad);">Delete company</div>
-        <button class="btn btn-icon btn-sm" id="closeDeleteModalBtn" aria-label="Close">✕</button>
-      </div>
-      <div class="modal-body">
-        <p style="font-size:13.5px;line-height:1.5;">Delete <strong id="deleteTargetName"></strong>?</p>
-        <p style="font-size:12.5px;color:var(--ink-muted);">This permanently removes the company and all its contacts.
-          It can’t be undone.</p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn" id="cancelDeleteBtn">Cancel</button>
-        <button class="btn btn-danger-solid" id="confirmDeleteBtn">Delete company</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Remove Person Modal -->
-  <div class="modal-overlay" id="deletePersonModal">
-    <div class="modal-card modal-card-sm">
-      <div class="modal-header">
-        <div class="modal-title" style="color:var(--bad);">Remove person</div>
-        <button class="btn btn-icon btn-sm" id="closeDeletePersonModalBtn" aria-label="Close">✕</button>
-      </div>
-      <div class="modal-body">
-        <p style="font-size:13.5px;line-height:1.5;">Remove <strong id="deletePersonTargetName"></strong>?</p>
-        <p style="font-size:12.5px;color:var(--ink-muted);">This permanently removes this person from the company. It
-          can’t be undone.</p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn" id="cancelDeletePersonBtn">Cancel</button>
-        <button class="btn btn-danger-solid" id="confirmDeletePersonBtn">Remove person</button>
-      </div>
-    </div>
-  </div>
-
   <!-- Settings Modal -->
   <div class="modal-overlay" id="settingsModal">
     <div class="modal-card modal-card-wide">
       <div class="modal-header">
         <div class="modal-title">Pipeline and fields</div>
-        <button class="btn btn-icon btn-sm" id="closeSettingsBtn" aria-label="Close">✕</button>
+        <button class="btn btn-icon btn-sm" id="closeSettingsBtn" aria-label="Close without saving"
+          title="Close without saving">✕</button>
       </div>
       <div class="modal-body">
         <div class="settings-section">
@@ -333,7 +296,28 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-primary" id="doneSettingsBtn">Done</button>
+        <span class="settings-hint" id="settingsHint">No changes yet</span>
+        <button class="btn" id="cancelSettingsBtn">Cancel</button>
+        <button class="btn btn-primary" id="doneSettingsBtn" disabled>Save changes</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm popup (used for every delete and for saving settings). Keep this last so it sits above other popups. -->
+  <div class="modal-overlay" id="confirmModal">
+    <div class="modal-card modal-card-sm">
+      <div class="modal-header">
+        <div class="modal-title" id="confirmTitle">Are you sure?</div>
+        <button class="btn btn-icon btn-sm" id="closeConfirmBtn" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="confirm-message" id="confirmMessage"></p>
+        <ul class="confirm-list" id="confirmList" hidden></ul>
+        <p class="confirm-note" id="confirmNote" hidden></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="cancelConfirmBtn">Cancel</button>
+        <button class="btn btn-primary" id="okConfirmBtn">Confirm</button>
       </div>
     </div>
   </div>

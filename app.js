@@ -40,13 +40,13 @@ const STALE_DAYS = 5;
 const clone = o => JSON.parse(JSON.stringify(o));
 
 let config = clone(DEFAULT_CONFIG);
+let draft = null;          // working copy of config while Settings is open (nothing is saved until confirmed)
+let pendingConfirm = null; // function to run when the confirm popup is accepted
 let data = [];
 let open = null;
 let filter = "All";
 let activeMenuCoId = null;
 let activeMenuPId = null;
-let pendingDeleteCoId = null;
-let pendingDeleteContact = null; // { coId, pId, personName }
 
 const DOTS_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="12" cy="19" r="2"/></svg>`;
 const EDIT_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
@@ -110,6 +110,51 @@ function showToast(message, type = "info") {
     setTimeout(() => el.remove(), 250);
   }, 2600);
 }
+
+/* ---------- Confirm popup (used for every delete and for saving settings) ---------- */
+// options: { title, message (html, escape any user text first), items[], note, confirmLabel, danger, onConfirm }
+function askConfirm(opts) {
+  pendingConfirm = opts.onConfirm || null;
+  $("confirmTitle").textContent = opts.title || "Are you sure?";
+  $("confirmTitle").style.color = opts.danger ? "var(--bad)" : "";
+  $("confirmMessage").innerHTML = opts.message || "";
+
+  const list = $("confirmList");
+  const items = opts.items || [];
+  if (items.length) {
+    const MAX = 12;
+    const shown = items.slice(0, MAX).map(i => `<li>${esc(i)}</li>`);
+    if (items.length > MAX) shown.push(`<li>and ${items.length - MAX} more</li>`);
+    list.innerHTML = shown.join("");
+    list.hidden = false;
+  } else {
+    list.innerHTML = "";
+    list.hidden = true;
+  }
+
+  const note = $("confirmNote");
+  note.textContent = opts.note || "";
+  note.hidden = !opts.note;
+
+  const ok = $("okConfirmBtn");
+  ok.textContent = opts.confirmLabel || "Confirm";
+  ok.className = "btn " + (opts.danger ? "btn-danger-solid" : "btn-primary");
+  showModal("confirmModal");
+  ok.focus();
+}
+
+function closeConfirm() {
+  pendingConfirm = null;
+  hideModal("confirmModal");
+}
+
+$("okConfirmBtn").onclick = () => {
+  const fn = pendingConfirm;
+  closeConfirm();
+  if (fn) fn();
+};
+$("cancelConfirmBtn").onclick = closeConfirm;
+$("closeConfirmBtn").onclick = closeConfirm;
 
 /* ---------- Storage ---------- */
 
@@ -484,7 +529,7 @@ function render() {
 }
 
 /* ---------- Modal helpers ---------- */
-const MODALS = ["addForm", "personModal", "editModal", "deleteConfirmModal", "deletePersonModal", "settingsModal"];
+const MODALS = ["addForm", "personModal", "editModal", "settingsModal", "confirmModal"];
 const showModal = id => $(id).classList.add("show");
 const hideModal = id => $(id).classList.remove("show");
 
@@ -527,38 +572,72 @@ function openPersonModal(coId, pId) {
   $("pn").focus();
 }
 
+/* ---------- Delete company / person (confirmed in the popup) ---------- */
 function openDeleteConfirmModal(coId) {
   const c = data.find(x => x.id === coId);
   if (!c) return;
-  pendingDeleteCoId = coId;
-  $("deleteTargetName").textContent = `"${c.company}"`;
-  showModal("deleteConfirmModal");
+  const people = (c.contacts || []).length;
+  askConfirm({
+    title: "Delete company",
+    message: `Delete <strong>${esc(c.company)}</strong>?`,
+    note: `This permanently removes the company${people ? ` and its ${people} contact${people > 1 ? "s" : ""}` : ""}. It can’t be undone.`,
+    confirmLabel: "Delete company",
+    danger: true,
+    onConfirm: () => {
+      data = data.filter(x => x.id !== coId);
+      if (open === coId) open = null;
+      save();
+      render();
+      showToast(`Deleted ${c.company}`);
+    }
+  });
 }
 
 function openDeletePersonModal(coId, pId, personName) {
-  pendingDeleteContact = { coId, pId, personName };
-  $("deletePersonTargetName").textContent = `"${personName}"`;
-  showModal("deletePersonModal");
+  askConfirm({
+    title: "Remove person",
+    message: `Remove <strong>${esc(personName)}</strong>?`,
+    note: "This permanently removes this person from the company. It can’t be undone.",
+    confirmLabel: "Remove person",
+    danger: true,
+    onConfirm: () => {
+      const c = data.find(x => x.id === coId);
+      if (c) {
+        c.contacts = (c.contacts || []).filter(p => p.id !== pId);
+        c.updatedAt = nowIso();
+        save();
+      }
+      render();
+      showToast(`Removed ${personName}`);
+    }
+  });
 }
 
-function closeAllModals() {
-  MODALS.forEach(hideModal);
-  pendingDeleteCoId = null;
-  pendingDeleteContact = null;
-}
-
-/* ---------- Settings rendering ---------- */
-// One renderer for all simple lists. listKey is a key of config.
+/* ---------- Settings (edits a draft, saved only after confirmation) ---------- */
 const SIMPLE_LISTS = {
-  searchRoles: { box: "roleChips", label: "searching role", ordered: false },
-  personRoles: { box: "personRoleChips", label: "person role", ordered: false },
-  personStages: { box: "stageChips", label: "person stage", ordered: true },
-  approaches: { box: "approachChips", label: "approach", ordered: false }
+  searchRoles: { box: "roleChips", label: "searching role", plural: "searching roles", ordered: false },
+  personRoles: { box: "personRoleChips", label: "person role", plural: "person roles", ordered: false },
+  personStages: { box: "stageChips", label: "person stage", plural: "person stages", ordered: true },
+  approaches: { box: "approachChips", label: "approach", plural: "approaches", ordered: false }
 };
 
+const COL_MAP = { colStrategy: "strategy", colStatus: "status", colHealth: "health", colNotes: "notes", colUpdated: "updated" };
+const COL_NAMES = { strategy: "Strategy and approach", status: "Overall status", health: "Sub-category", notes: "Notes and comments", updated: "Last updated date" };
+
+const settingsChanged = () => Boolean(draft) && JSON.stringify(draft) !== JSON.stringify(config);
+
+function updateSettingsFooter() {
+  const changed = settingsChanged();
+  $("doneSettingsBtn").disabled = !changed;
+  const hint = $("settingsHint");
+  hint.textContent = changed ? "You have unsaved changes" : "No changes yet";
+  hint.classList.toggle("dirty", changed);
+}
+
 function renderList(listKey) {
+  if (!draft) return;
   const meta = SIMPLE_LISTS[listKey];
-  const list = config[listKey] || [];
+  const list = draft[listKey] || [];
   $(meta.box).innerHTML = list.map((item, i) => `
     <span class="chip">${meta.ordered ? `<span class="chip-order">${i + 1}</span>` : ""}<span>${esc(item)}</span>
     ${list.length > 1 ? `<button class="chip-remove" data-del-list="${listKey}|${i}" title="Remove ${meta.label}">✕</button>` : ""}</span>`).join("");
@@ -569,22 +648,22 @@ function renderAllLists() {
 }
 
 function addToList(listKey, inputId) {
+  if (!draft) return;
   const val = $(inputId).value.trim();
   if (!val) return;
-  if (!config[listKey].includes(val)) {
-    config[listKey].push(val);
-    saveConfig();
+  if (!draft[listKey].includes(val)) {
+    draft[listKey].push(val);
     $(inputId).value = "";
     renderList(listKey);
-    render();
-    showToast(`Added ${SIMPLE_LISTS[listKey].label} "${val}"`, "success");
+    updateSettingsFooter();
   }
 }
 
 function renderSettingsHierarchy() {
-  const statuses = getStatuses();
+  if (!draft) return;
+  const statuses = Object.keys(draft.statusHierarchy || {});
   $("statusHierarchyContainer").innerHTML = statuses.map(name => {
-    const subs = getSubcategories(name);
+    const subs = draft.statusHierarchy[name] || [];
     return `
       <div class="status-card-config">
         <div class="status-card-header">
@@ -611,26 +690,53 @@ function renderSettingsHierarchy() {
 }
 
 function openSettingsModal() {
-  const cols = config.visibleColumns;
-  $("colStrategy").checked = cols.strategy !== false;
-  $("colStatus").checked = cols.status !== false;
-  $("colHealth").checked = cols.health !== false;
-  $("colNotes").checked = cols.notes !== false;
-  $("colUpdated").checked = cols.updated !== false;
+  draft = clone(config);
+  const cols = draft.visibleColumns;
+  Object.keys(COL_MAP).forEach(id => { $(id).checked = cols[COL_MAP[id]] !== false; });
   renderAllLists();
   renderSettingsHierarchy();
+  updateSettingsFooter();
   showModal("settingsModal");
+}
+
+// Closing Settings in any way (Cancel, the X, Escape, clicking outside) throws the draft away
+function closeSettings() {
+  draft = null;
+  ["newRoleInput", "newPersonRoleInput", "newStageInput", "newApproachInput", "newOverallStatusInput"].forEach(id => { $(id).value = ""; });
+  hideModal("settingsModal");
+}
+
+function describeChanges(before, after) {
+  const out = [];
+  Object.keys(SIMPLE_LISTS).forEach(k => {
+    const b = before[k] || [], a = after[k] || [];
+    a.filter(x => !b.includes(x)).forEach(x => out.push(`Add "${x}" to ${SIMPLE_LISTS[k].plural}`));
+    b.filter(x => !a.includes(x)).forEach(x => out.push(`Remove "${x}" from ${SIMPLE_LISTS[k].plural}`));
+  });
+  const bs = before.statusHierarchy || {}, as = after.statusHierarchy || {};
+  Object.keys(as).filter(s => !(s in bs)).forEach(s => out.push(`Add overall status "${s}"`));
+  Object.keys(bs).filter(s => !(s in as)).forEach(s => out.push(`Remove overall status "${s}"`));
+  Object.keys(as).filter(s => s in bs).forEach(s => {
+    as[s].filter(x => !bs[s].includes(x)).forEach(x => out.push(`Add sub-category "${x}" under ${s}`));
+    bs[s].filter(x => !as[s].includes(x)).forEach(x => out.push(`Remove sub-category "${x}" from ${s}`));
+  });
+  Object.keys(COL_NAMES).forEach(k => {
+    const was = (before.visibleColumns || {})[k] !== false;
+    const now = (after.visibleColumns || {})[k] !== false;
+    if (was !== now) out.push(`${now ? "Show" : "Hide"} column "${COL_NAMES[k]}"`);
+  });
+  return out.length ? out : ["Update settings"];
 }
 
 /* ---------- Click handling ---------- */
 document.addEventListener("click", e => {
   const t = e.target;
 
-  // Click on a modal backdrop closes that modal
+  // Click on a modal backdrop closes that modal (Settings discards its draft)
   if (t.classList && t.classList.contains("modal-overlay")) {
-    hideModal(t.id);
-    if (t.id === "deleteConfirmModal") pendingDeleteCoId = null;
-    if (t.id === "deletePersonModal") pendingDeleteContact = null;
+    if (t.id === "confirmModal") closeConfirm();
+    else if (t.id === "settingsModal") closeSettings();
+    else hideModal(t.id);
     return;
   }
 
@@ -700,64 +806,91 @@ document.addEventListener("click", e => {
   const addPerson = t.closest("[data-open-person]");
   if (addPerson) { openPersonModal(addPerson.dataset.openPerson); return; }
 
-  // Settings: remove an item from any simple list
+  // Settings: remove an item from a simple list (confirm first)
   const delList = t.closest("[data-del-list]");
-  if (delList) {
+  if (delList && draft) {
     const [listKey, idx] = delList.dataset.delList.split("|");
-    const list = config[listKey];
-    if (list && list.length > 1) {
-      const removed = list.splice(parseInt(idx, 10), 1);
-      saveConfig();
-      renderList(listKey);
-      render();
-      showToast(`Removed "${removed[0]}"`);
-    }
+    const item = (draft[listKey] || [])[parseInt(idx, 10)];
+    if (item === undefined) return;
+    const meta = SIMPLE_LISTS[listKey];
+    askConfirm({
+      title: `Remove ${meta.label}`,
+      message: `Remove <strong>${esc(item)}</strong> from ${esc(meta.plural)}?`,
+      note: "This is applied only when you save your settings.",
+      confirmLabel: "Remove",
+      danger: true,
+      onConfirm: () => {
+        if (!draft) return;
+        const list = draft[listKey];
+        const i = list.indexOf(item);
+        if (i >= 0 && list.length > 1) list.splice(i, 1);
+        renderList(listKey);
+        updateSettingsFooter();
+      }
+    });
     return;
   }
 
   // Settings: add sub-category
   const addSub = t.closest("[data-add-sub]");
-  if (addSub) {
+  if (addSub && draft) {
     const name = addSub.dataset.addSub;
     const input = Array.from(document.querySelectorAll("[data-sub-input]")).find(i => i.dataset.subInput === name);
     const val = input ? input.value.trim() : "";
     if (val) {
-      if (!config.statusHierarchy[name]) config.statusHierarchy[name] = [];
-      if (!config.statusHierarchy[name].includes(val)) {
-        config.statusHierarchy[name].push(val);
-        saveConfig();
+      if (!draft.statusHierarchy[name]) draft.statusHierarchy[name] = [];
+      if (!draft.statusHierarchy[name].includes(val)) {
+        draft.statusHierarchy[name].push(val);
         renderSettingsHierarchy();
-        render();
-        showToast(`Added "${val}" under ${name}`, "success");
+        updateSettingsFooter();
       }
     }
     return;
   }
 
-  // Settings: remove sub-category
+  // Settings: remove sub-category (confirm first)
   const delSub = t.closest("[data-del-sub]");
-  if (delSub) {
+  if (delSub && draft) {
     const [name, idx] = delSub.dataset.delSub.split("|");
-    if (config.statusHierarchy[name]) {
-      config.statusHierarchy[name].splice(parseInt(idx, 10), 1);
-      saveConfig();
-      renderSettingsHierarchy();
-      render();
-    }
+    const item = (draft.statusHierarchy[name] || [])[parseInt(idx, 10)];
+    if (item === undefined) return;
+    askConfirm({
+      title: "Remove sub-category",
+      message: `Remove <strong>${esc(item)}</strong> from <strong>${esc(name)}</strong>?`,
+      note: "This is applied only when you save your settings.",
+      confirmLabel: "Remove",
+      danger: true,
+      onConfirm: () => {
+        if (!draft || !draft.statusHierarchy[name]) return;
+        const list = draft.statusHierarchy[name];
+        const i = list.indexOf(item);
+        if (i >= 0) list.splice(i, 1);
+        renderSettingsHierarchy();
+        updateSettingsFooter();
+      }
+    });
     return;
   }
 
-  // Settings: remove status
+  // Settings: remove status (confirm first)
   const delStatus = t.closest("[data-del-status]");
-  if (delStatus) {
+  if (delStatus && draft) {
     const name = delStatus.dataset.delStatus;
-    if (getStatuses().length > 1 && confirm(`Remove status "${name}" and its sub-categories?`)) {
-      delete config.statusHierarchy[name];
-      saveConfig();
-      renderSettingsHierarchy();
-      render();
-      showToast(`Removed status ${name}`);
-    }
+    if (Object.keys(draft.statusHierarchy).length <= 1) return;
+    const inUse = data.filter(c => c.status === name).length;
+    askConfirm({
+      title: "Remove status",
+      message: `Remove the status <strong>${esc(name)}</strong> and all its sub-categories?`,
+      note: (inUse ? `${inUse} compan${inUse === 1 ? "y uses" : "ies use"} this status right now and will need a new one. ` : "") + "This is applied only when you save your settings.",
+      confirmLabel: "Remove status",
+      danger: true,
+      onConfirm: () => {
+        if (!draft) return;
+        delete draft.statusHierarchy[name];
+        renderSettingsHierarchy();
+        updateSettingsFooter();
+      }
+    });
     return;
   }
 
@@ -912,57 +1045,36 @@ $("saveEditBtn").onclick = () => {
   showToast(`Updated ${c.company}`, "success");
 };
 
-/* ---------- Delete company / person ---------- */
-function cancelDeleteCompany() { pendingDeleteCoId = null; hideModal("deleteConfirmModal"); }
-function cancelDeletePerson() { pendingDeleteContact = null; hideModal("deletePersonModal"); }
-
-$("cancelDeleteBtn").onclick = cancelDeleteCompany;
-$("closeDeleteModalBtn").onclick = cancelDeleteCompany;
-$("cancelDeletePersonBtn").onclick = cancelDeletePerson;
-$("closeDeletePersonModalBtn").onclick = cancelDeletePerson;
-
-$("confirmDeleteBtn").onclick = () => {
-  if (!pendingDeleteCoId) return;
-  const c = data.find(x => x.id === pendingDeleteCoId);
-  const name = c ? c.company : "Company";
-  data = data.filter(x => x.id !== pendingDeleteCoId);
-  if (open === pendingDeleteCoId) open = null;
-  save();
-  cancelDeleteCompany();
-  render();
-  showToast(`Deleted ${name}`);
-};
-
-$("confirmDeletePersonBtn").onclick = () => {
-  if (!pendingDeleteContact) return;
-  const { coId, pId, personName } = pendingDeleteContact;
-  const c = data.find(x => x.id === coId);
-  if (c) {
-    c.contacts = c.contacts.filter(p => p.id !== pId);
-    c.updatedAt = nowIso();
-    save();
-  }
-  cancelDeletePerson();
-  render();
-  showToast(`Removed ${personName}`);
-};
-
-/* ---------- Settings ---------- */
+/* ---------- Settings buttons ---------- */
 $("settingsBtn").onclick = openSettingsModal;
-$("closeSettingsBtn").onclick = () => hideModal("settingsModal");
+$("closeSettingsBtn").onclick = closeSettings;
+$("cancelSettingsBtn").onclick = closeSettings;
+
+Object.keys(COL_MAP).forEach(id => {
+  $(id).addEventListener("change", () => {
+    if (!draft) return;
+    draft.visibleColumns[COL_MAP[id]] = $(id).checked;
+    updateSettingsFooter();
+  });
+});
 
 $("doneSettingsBtn").onclick = () => {
-  config.visibleColumns = {
-    strategy: $("colStrategy").checked,
-    status: $("colStatus").checked,
-    health: $("colHealth").checked,
-    notes: $("colNotes").checked,
-    updated: $("colUpdated").checked
-  };
-  saveConfig();
-  hideModal("settingsModal");
-  render();
-  showToast("Settings updated", "success");
+  if (!settingsChanged()) return;
+  askConfirm({
+    title: "Save settings changes",
+    message: "Apply these changes?",
+    items: describeChanges(config, draft),
+    confirmLabel: "Save changes",
+    danger: false,
+    onConfirm: () => {
+      if (!draft) return;
+      config = clone(draft);
+      saveConfig();
+      closeSettings();
+      render();
+      showToast("Settings updated", "success");
+    }
+  });
 };
 
 $("addRoleBtn").onclick = () => addToList("searchRoles", "newRoleInput");
@@ -971,18 +1083,17 @@ $("addStageBtn").onclick = () => addToList("personStages", "newStageInput");
 $("addApproachBtn").onclick = () => addToList("approaches", "newApproachInput");
 
 $("addOverallStatusBtn").onclick = () => {
+  if (!draft) return;
   const val = $("newOverallStatusInput").value.trim();
-  if (val && !config.statusHierarchy[val]) {
-    config.statusHierarchy[val] = ["Stage 1", "Stage 2"];
-    saveConfig();
+  if (val && !draft.statusHierarchy[val]) {
+    draft.statusHierarchy[val] = ["Stage 1", "Stage 2"];
     $("newOverallStatusInput").value = "";
     renderSettingsHierarchy();
-    render();
-    showToast(`Added status "${val}"`, "success");
+    updateSettingsFooter();
   }
 };
 
-/* ---------- Export / import ---------- */
+/* ---------- Export ---------- */
 $("expBtn").onclick = () => {
   const blob = new Blob([JSON.stringify({ data, config }, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
@@ -991,7 +1102,6 @@ $("expBtn").onclick = () => {
   a.click();
   showToast("Exported backup file", "success");
 };
-
 
 /* ---------- Theme ---------- */
 const SUN_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>`;
@@ -1013,15 +1123,35 @@ $("themeToggle").addEventListener("click", () => {
 });
 
 /* ---------- Keyboard ---------- */
+const ENTER_ADD = {
+  newRoleInput: "addRoleBtn",
+  newPersonRoleInput: "addPersonRoleBtn",
+  newStageInput: "addStageBtn",
+  newApproachInput: "addApproachBtn",
+  newOverallStatusInput: "addOverallStatusBtn"
+};
+
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    closeAllModals();
+    // Close only the top most popup. Closing Settings discards unsaved changes.
+    if ($("confirmModal").classList.contains("show")) closeConfirm();
+    else if ($("settingsModal").classList.contains("show")) closeSettings();
+    else MODALS.forEach(hideModal);
     activeMenuCoId = null;
     activeMenuPId = null;
     render();
+    return;
   }
-  // Enter submits the add company, edit company and person popups from a text field
+
   if (e.key === "Enter" && e.target.tagName === "INPUT" && e.target.type !== "file") {
+    // Settings: Enter in an "add" box clicks its Add button
+    if (ENTER_ADD[e.target.id]) { $(ENTER_ADD[e.target.id]).click(); return; }
+    if (e.target.dataset && e.target.dataset.subInput !== undefined) {
+      const btn = Array.from(document.querySelectorAll("[data-add-sub]")).find(b => b.dataset.addSub === e.target.dataset.subInput);
+      if (btn) btn.click();
+      return;
+    }
+    // Enter submits the add company, edit company and person popups from a text field
     if ($("addForm").classList.contains("show")) $("save").click();
     else if ($("personModal").classList.contains("show")) $("savePersonBtn").click();
     else if ($("editModal").classList.contains("show")) $("saveEditBtn").click();
