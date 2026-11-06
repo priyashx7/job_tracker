@@ -340,6 +340,11 @@ function renderContactCard(c, p) {
             ${stageOptions(p.stage)}
           </select>
         </div>
+        <div class="contact-note-col">
+          ${p.comment && p.comment.trim()
+      ? `<div class="contact-note" data-full-note="${esc(p.comment)}">${esc(p.comment)}</div>`
+      : `<span class="no-notes-text">No notes</span>`}
+        </div>
         <div><span class="contact-date-badge ${isStale ? "stale" : ""}">${esc(when)}</span></div>
         <div class="contact-actions-col">
           <button class="btn-dots" data-pdots="${p.id}" title="Person actions" aria-label="Person options">${DOTS_SVG}</button>
@@ -349,7 +354,6 @@ function renderContactCard(c, p) {
           </div>
         </div>
       </div>
-      ${p.comment ? `<div class="contact-note-display-box">${esc(p.comment)}</div>` : ""}
     </div>`;
 }
 
@@ -376,7 +380,47 @@ function closeMenus() {
 window.addEventListener("scroll", closeMenus, true);
 window.addEventListener("resize", closeMenus);
 
+/* ---------- Hover box for long person notes ---------- */
+// One floating box is reused. It shows only while the mouse is over a note that is cut short,
+// and it disappears as soon as the mouse moves away.
+let notePop = null;
+
+function hideNotePop() {
+  if (notePop) notePop.classList.remove("show");
+}
+
+function showNotePop(el) {
+  // Only needed when the visible text is cut off
+  if (el.scrollWidth <= el.clientWidth + 1) return;
+  if (!notePop) {
+    notePop = document.createElement("div");
+    notePop.className = "note-popover";
+    document.body.appendChild(notePop);
+  }
+  notePop.textContent = el.dataset.fullNote || el.textContent;
+  notePop.classList.add("show");
+
+  const r = el.getBoundingClientRect();
+  const pw = notePop.offsetWidth;
+  const ph = notePop.offsetHeight;
+  const left = Math.min(Math.max(8, r.left), window.innerWidth - pw - 8);
+  const top = (r.bottom + 6 + ph > window.innerHeight) ? Math.max(8, r.top - ph - 6) : r.bottom + 6;
+  notePop.style.left = left + "px";
+  notePop.style.top = top + "px";
+}
+
+document.addEventListener("mouseover", e => {
+  const el = e.target.closest && e.target.closest(".contact-note");
+  if (el) showNotePop(el);
+});
+document.addEventListener("mouseout", e => {
+  const el = e.target.closest && e.target.closest(".contact-note");
+  if (el && !(e.relatedTarget && el.contains(e.relatedTarget))) hideNotePop();
+});
+window.addEventListener("scroll", hideNotePop, true);
+
 function render() {
+  hideNotePop();
   syncDropdownOptions();
   renderTableHeaders();
 

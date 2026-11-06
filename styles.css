@@ -936,7 +936,7 @@ tr.detail-row td {
 
 .contact-top-row {
   display: grid;
-  grid-template-columns: 1.4fr 1.2fr 1.1fr auto auto;
+  grid-template-columns: 1.4fr 1.2fr 1.1fr 1.5fr auto auto;
   align-items: center;
   gap: 10px;
 }
@@ -1590,4 +1590,51 @@ tbody tr.co-row td:first-child {
 
 .settings-hint.dirty {
   color: var(--warn-text);
+}
+
+
+/* ==========================================================
+   Person note shown in the same row, cut short when long
+   ========================================================== */
+.contact-note-col {
+  min-width: 0;
+}
+
+.contact-note {
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--surf-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.note-popover {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1100;
+  display: none;
+  max-width: 360px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 10px 12px;
+  background: var(--surf);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: none;
+}
+
+.note-popover.show {
+  display: block;
 }
