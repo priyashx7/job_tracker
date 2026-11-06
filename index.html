@@ -45,7 +45,8 @@
 
         <button class="btn btn-icon" id="themeToggle" title="Toggle dark/light mode" aria-label="Toggle theme"></button>
 
-        <button class="btn btn-sm" id="expBtn" title="Export JSON backup">Export</button>
+        <button class="btn btn-sm" id="expBtn" title="Download an Excel file with companies and people">Export
+          Excel</button>
 
         <button class="btn btn-primary" id="addBtn">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -324,6 +325,8 @@
 
   <div id="toast-container"></div>
 
+  <!-- SheetJS builds the Excel file in the browser -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="app.js"></script>
 </body>
 

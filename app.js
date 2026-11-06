@@ -1093,15 +1093,66 @@ $("addOverallStatusBtn").onclick = () => {
   }
 };
 
-/* ---------- Export ---------- */
-$("expBtn").onclick = () => {
-  const blob = new Blob([JSON.stringify({ data, config }, null, 2)], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `job-outreach-backup-${today()}.json`;
-  a.click();
-  showToast("Exported backup file", "success");
-};
+/* ---------- Export to Excel ---------- */
+// Tab 1 "Companies": one row per company.
+// Tab 2 "People": one row per person, with the company name as the first column.
+function sheetFromRows(rows, headers, widths) {
+  const aoa = [headers, ...rows.map(r => headers.map(h => (r[h] === undefined || r[h] === null) ? "" : r[h]))];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = widths.map(w => ({ wch: w }));
+  ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(aoa.length - 1, 0), c: headers.length - 1 } }) };
+  return ws;
+}
+
+function exportToExcel() {
+  if (typeof XLSX === "undefined") {
+    showToast("Excel export needs an internet connection to load. Please try again.", "warn");
+    return;
+  }
+
+  const companyHeaders = ["Company", "Searching role", "Strategy", "Approach", "Overall status", "Sub-category", "Notes", "People count", "Last updated"];
+  const peopleHeaders = ["Company", "Name", "Person role", "LinkedIn URL", "Stage", "Notes", "Last contact date", "Last updated"];
+
+  const companyRows = [];
+  const peopleRows = [];
+
+  data.forEach(c => {
+    const info = getLatestUpdateInfo(c);
+    companyRows.push({
+      "Company": c.company || "",
+      "Searching role": c.role || "",
+      "Strategy": c.type || "",
+      "Approach": c.approach || "",
+      "Overall status": c.status || "",
+      "Sub-category": c.subCategory || "",
+      "Notes": c.comment || "",
+      "People count": (c.contacts || []).length,
+      "Last updated": info.calendarDate
+    });
+
+    (c.contacts || []).forEach(p => {
+      peopleRows.push({
+        "Company": c.company || "",
+        "Name": p.name || "",
+        "Person role": p.role || "",
+        "LinkedIn URL": p.url || "",
+        "Stage": p.stage || "",
+        "Notes": p.comment || "",
+        "Last contact date": p.date ? formatCalendarDate(p.date) : "",
+        "Last updated": formatCalendarDate(p.updatedAt || p.date)
+      });
+    });
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(companyRows, companyHeaders, [26, 24, 12, 26, 16, 26, 40, 13, 16]), "Companies");
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(peopleRows, peopleHeaders, [26, 24, 24, 40, 20, 40, 18, 16]), "People");
+
+  XLSX.writeFile(wb, `job-outreach-${today()}.xlsx`);
+  showToast(`Exported ${companyRows.length} companies and ${peopleRows.length} people`, "success");
+}
+
+$("expBtn").onclick = exportToExcel;
 
 /* ---------- Theme ---------- */
 const SUN_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>`;
