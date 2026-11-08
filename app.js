@@ -84,6 +84,35 @@ function esc(s) {
   return String(s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+/* ---------- Company name checks ---------- */
+// Trim the start and end, then lower case
+const normName = s => String(s || "").trim().toLowerCase();
+
+// Same name once trimmed and lower cased. excludeId lets Edit ignore the company being edited.
+function findExactCompany(name, excludeId) {
+  const n = normName(name);
+  if (!n) return null;
+  return data.find(c => c.id !== excludeId && normName(c.company) === n) || null;
+}
+
+// Similar names, for example "pepper" vs "pepperfry" or "pepper fry".
+// Spaces are ignored and one name must contain the other.
+function findSimilarCompanies(name, excludeId) {
+  const n = normName(name).replace(/\s+/g, "");
+  if (n.length < 3) return [];
+  return data.filter(c => {
+    if (c.id === excludeId) return false;
+    const other = normName(c.company).replace(/\s+/g, "");
+    if (other.length < 3 || other === n) return false;
+    return other.includes(n) || n.includes(other);
+  });
+}
+
+function similarMessage(list) {
+  const names = list.map(c => c.company).join(", ");
+  return `A company with a similar name already exists: ${names}`;
+}
+
 // Picks a colour tone for an overall status
 function tone(name) {
   const n = (name || "").toLowerCase();
@@ -95,7 +124,7 @@ function tone(name) {
   return ["blue", "purple", "teal", "amber"][idx % 4];
 }
 
-function showToast(message, type = "info") {
+function showToast(message, type = "info", duration = 2600) {
   const container = $("toast-container");
   if (!container) return;
   const el = document.createElement("div");
@@ -108,7 +137,7 @@ function showToast(message, type = "info") {
     el.style.opacity = "0";
     el.style.transform = "translateY(8px)";
     setTimeout(() => el.remove(), 250);
-  }, 2600);
+  }, duration);
 }
 
 /* ---------- Confirm popup (used for every delete and for saving settings) ---------- */
@@ -1005,6 +1034,17 @@ $("cancelAdd").onclick = () => hideModal("addForm");
 $("save").onclick = () => {
   const company = $("nCo").value.trim();
   if (!company) return $("nCo").focus();
+
+  // Block an exact match (ignoring spaces at the ends and letter case)
+  const exact = findExactCompany(company);
+  if (exact) {
+    showToast(`"${exact.company}" already exists. The same company cannot be added twice.`, "warn", 5000);
+    return $("nCo").focus();
+  }
+
+  // Similar names are allowed, but we tell the user
+  const similar = findSimilarCompanies(company);
+
   const type = $("nType").value;
   const status = $("nStatus").value || getStatuses()[0] || "Applied";
   const c = {
@@ -1028,7 +1068,8 @@ $("save").onclick = () => {
   $("nComment").value = "";
   hideModal("addForm");
   render();
-  showToast(`Added ${company}`, "success");
+  if (similar.length) showToast(`Added ${company}. ${similarMessage(similar)}`, "warn", 6000);
+  else showToast(`Added ${company}`, "success");
 };
 
 /* ---------- Add / edit person ---------- */
@@ -1075,6 +1116,16 @@ $("saveEditBtn").onclick = () => {
   if (!c) return;
   const name = $("editCo").value.trim();
   if (!name) return $("editCo").focus();
+
+  // Block an exact match with any other company
+  const exact = findExactCompany(name, c.id);
+  if (exact) {
+    showToast(`"${exact.company}" already exists. The same company cannot be added twice.`, "warn", 5000);
+    return $("editCo").focus();
+  }
+
+  const similar = findSimilarCompanies(name, c.id);
+
   c.company = name;
   c.role = $("editRole").value.trim();
   c.type = $("editType").value;
@@ -1086,7 +1137,8 @@ $("saveEditBtn").onclick = () => {
   save();
   hideModal("editModal");
   render();
-  showToast(`Updated ${c.company}`, "success");
+  if (similar.length) showToast(`Updated ${c.company}. ${similarMessage(similar)}`, "warn", 6000);
+  else showToast(`Updated ${c.company}`, "success");
 };
 
 /* ---------- Settings buttons ---------- */
